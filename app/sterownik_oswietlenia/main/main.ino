@@ -108,6 +108,9 @@ bool getDigitalButton(int pin) {
       delay(10);
     }
   }
+  if (!backlightLast) {
+    return LOW;
+  }
   return state;
 }
 
