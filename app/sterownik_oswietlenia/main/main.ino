@@ -21,14 +21,14 @@ bool backlightLast = false;
 
 void setup()
 {
-  Serial.begin(9600);
+  // Serial.begin(9600);
   lcd.init();
-  // lcd.backlight();
   setLastActivity();
   setScreenBacklight();
 }
 
 void loop() {
+  setButton();
   screenSelect();
   setScreenBacklight();
   switch (screenSelectCurrent) {
@@ -78,6 +78,86 @@ void screenDate() {
   lcd.setCursor(0, 1);
   sprintf(line[1], "Date: %s", date);
   lcd.print(line[1]);
+
+  if (buttonSetState == HIGH) {
+    setScreenDate();
+  }
+}
+
+void adjustTimeDate(struct tm * timeinfo, int hour, int minute, int second, int year, int month, int day) {
+  myRTC.setDS1302Time(timeinfo->tm_sec+second, timeinfo->tm_min+minute, timeinfo->tm_hour+hour, 0, timeinfo->tm_mday+day, timeinfo->tm_mon+month+1, timeinfo->tm_year+year+1900);
+}
+
+void setScreenDate() {
+  char time[9];
+  char date[11];
+  char line[2][16];
+  char timeFormat[] = "%H:%M:%S";
+  char dateFormat[] = "%Y/%m/%d";
+  bool display = true;
+  int selectPos = 0;
+  int menuSize = 6;
+  struct tm * timeinfo;
+  do {
+    setButton();
+    timeinfo = getCurrentTm();
+    strftime(time, 9, timeFormat, timeinfo);
+    strftime(date, 11, dateFormat, timeinfo);
+
+    if (buttonRightState == HIGH) {
+      selectPos += 1;
+      if (selectPos >= menuSize) {
+        selectPos = 0;
+      }
+    }
+
+    switch (selectPos) {
+      case 0:
+        if (!display) strftime(time, 9, "  :%M:%S", timeinfo);
+        if (buttonPlusState == HIGH) adjustTimeDate(timeinfo, 1, 0, 0, 0, 0, 0);
+        if (buttonMinusState == HIGH) adjustTimeDate(timeinfo, -1, 0, 0, 0, 0, 0);
+        break;
+      case 1:
+        if (!display) strftime(time, 9, "%H:  :%S", timeinfo);
+        if (buttonPlusState == HIGH) adjustTimeDate(timeinfo, 0, 1, 0, 0, 0, 0);
+        if (buttonMinusState == HIGH) adjustTimeDate(timeinfo, 0, -1, 0, 0, 0, 0);
+        break;
+      case 2:
+        if (!display) strftime(time, 9, "%H:%M:  ", timeinfo);
+        if (buttonPlusState == HIGH) adjustTimeDate(timeinfo, 0, 0, 1, 0, 0, 0);
+        if (buttonMinusState == HIGH) adjustTimeDate(timeinfo, 0, 0, -1, 0, 0, 0);
+        break;
+      case 3:
+        if (!display) strftime(date, 11, "    /%m/%d", timeinfo);
+        if (buttonPlusState == HIGH) adjustTimeDate(timeinfo, 0, 0, 0, 1, 0, 0);
+        if (buttonMinusState == HIGH) adjustTimeDate(timeinfo, 0, 0, 0, -1, 0, 0);
+        break;
+      case 4:
+        if (!display) strftime(date, 11, "%Y/  /%d", timeinfo);
+        if (buttonPlusState == HIGH) adjustTimeDate(timeinfo, 0, 0, 0, 0, 1, 0);
+        if (buttonMinusState == HIGH) adjustTimeDate(timeinfo, 0, 0, 0, 0, -1, 0);
+        break;
+      case 5:
+        if (!display) strftime(date, 11, "%Y/%m/  ", timeinfo);
+        if (buttonPlusState == HIGH) adjustTimeDate(timeinfo, 0, 0, 0, 0, 0, 1);
+        if (buttonMinusState == HIGH) adjustTimeDate(timeinfo, 0, 0, 0, 0, 0, -1);
+        break;
+    }
+
+    if (display) {
+      display = false;
+    } else {
+      display = true;
+    }
+
+    lcd.setCursor(0, 0);
+    sprintf(line[0], "Time: %s", time);
+    lcd.print(line[0]);
+    lcd.setCursor(0, 1);
+    sprintf(line[1], "Date: %s", date);
+    lcd.print(line[1]);
+    delay(100);
+  } while (buttonSetState == LOW);
 }
 
 void setButton() {
@@ -88,7 +168,6 @@ void setButton() {
 }
 
 void screenSelect() {
-  setButton();
   if (buttonRightState == HIGH) {
     // Serial.println("+");
     screenSelectCurrent += 1;
