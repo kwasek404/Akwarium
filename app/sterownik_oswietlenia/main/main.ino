@@ -66,7 +66,7 @@ void screenInfo() {
   char line[2][16];
   strftime(time, 9, "%H:%M:%S", timeinfo);
   lcd.setCursor(0, 0);
-  sprintf(line[0], "Time: %s", time);
+  sprintf(line[0], "Time: %s ", time);
   lcd.print(line[0]);
   lcd.setCursor(0, 1);
   lcd.print("Power: 200W 100%");
@@ -188,7 +188,7 @@ void screenDate() {
   strftime(date, 11, "%Y/%m/%d", timeinfo);
 
   lcd.setCursor(0, 0);
-  sprintf(line[0], "Time: %s", time);
+  sprintf(line[0], "Time: %s ", time);
   lcd.print(line[0]);
   lcd.setCursor(0, 1);
   sprintf(line[1], "Date: %s", date);
@@ -264,7 +264,7 @@ void setScreenDate() {
     }
 
     lcd.setCursor(0, 0);
-    sprintf(line[0], "Time: %s", time);
+    sprintf(line[0], "Time: %s ", time);
     lcd.print(line[0]);
     lcd.setCursor(0, 1);
     sprintf(line[1], "Date: %s", date);
