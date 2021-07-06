@@ -18,6 +18,10 @@ const int eepromTimerStopMinute = 4;
 const int eepromTimerStopSecond = 5;
 const int xPow = 2;
 const float yPowMax = 13.4; //6.7 = 103%
+const int voltageFeedbackPin = A2;
+const int voltagePin = 5;
+const int analogReadResolution = 1023;
+const int analogWriteResolution = 255;
 
 LiquidCrystal_I2C lcd(0x27,20,4);  // set the LCD address to 0x27 for a 16 chars and 2 line display
 virtuabotixRTC myRTC(6, 7, 8); //If you change the wiring change the pins here also
@@ -35,6 +39,8 @@ int timerStopHour = 0;
 int timerStopMinute = 0;
 int timerStopSecond = 0;
 float powerPercent = 0;
+int voltage = 255;
+time_t lastTimestamp = 0;
 
 void setup()
 {
@@ -50,6 +56,7 @@ void loop() {
   screenSelect();
   setScreenBacklight();
   calculatePower();
+  setOutputPower();
   switch (screenSelectCurrent) {
     case 0:
       screenInfo();
@@ -76,6 +83,26 @@ void screenInfo() {
   lcd.setCursor(0, 1);
   sprintf(line[1], "Power: %s%%    ", String(powerPercent).c_str());
   lcd.print(line[1]);
+}
+
+void setOutputPower() {
+  time_t now = getCurrentTimestamp();
+  if (lastTimestamp == now) {
+    return ;
+  }
+  float voltageFeedback;
+  voltageFeedback = (analogRead(voltageFeedbackPin)*10)/(float)analogReadResolution;
+  Serial.println(voltage);
+  Serial.println(voltageFeedback);
+  if (voltageFeedback >= ((powerPercent+10)/11)) {
+    voltage += 1;
+  } else {
+    voltage -= 1;
+  }
+  if (voltage < 0) voltage = 0;
+  if (voltage > analogWriteResolution) voltage = analogWriteResolution;
+  analogWrite(voltagePin, voltage);
+  lastTimestamp = now;
 }
 
 void calculatePower() {
@@ -107,11 +134,9 @@ void calculatePower() {
 
   if ((timestampStart + (timestampstopstartdiff / 2)) >= timestampNow) {
     //rozjasnianie
-    Serial.println("rozjasnianie");
     yPow = ((yPowMax * (timestampNow - timestampStart)) / (timestampstopstartdiff / 2));
   } else {
     //przyciemnianie
-    Serial.println("przyciemnianie");
     yPow = ((yPowMax * (timestampStop - timestampNow)) / (timestampstopstartdiff / 2));
     
   }
