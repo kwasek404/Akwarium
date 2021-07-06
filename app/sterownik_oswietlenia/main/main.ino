@@ -22,6 +22,10 @@ const int voltageFeedbackPin = A2;
 const int voltagePin = 5;
 const int analogReadResolution = 1023;
 const int analogWriteResolution = 255;
+const int switchTransformerPin = 2;
+const int switchBallast1Pin = 3;
+const int switchBallast2Pin = 4;
+const int switchBallast3Pin = A3;
 
 LiquidCrystal_I2C lcd(0x27,20,4);  // set the LCD address to 0x27 for a 16 chars and 2 line display
 virtuabotixRTC myRTC(6, 7, 8); //If you change the wiring change the pins here also
@@ -41,6 +45,14 @@ int timerStopSecond = 0;
 float powerPercent = 0;
 int voltage = 255;
 time_t lastTimestamp = 0;
+time_t nowTimestamp = 0;
+float voltageFeedback;
+bool booting = true;
+bool prepareForBoot = true;
+int switchTransformer = 255;
+int switchBallast1 = 255;
+int switchBallast2 = 255;
+int switchBallast3 = 255;
 
 void setup()
 {
@@ -49,12 +61,16 @@ void setup()
   setLastActivity();
   setScreenBacklight();
   eepromLoad();
+  nowTimestamp = getCurrentTimestamp();
+  lastTimestamp = nowTimestamp;
 }
 
 void loop() {
+  nowTimestamp = getCurrentTimestamp();
   setButton();
   screenSelect();
   setScreenBacklight();
+  setSwitches();
   calculatePower();
   setOutputPower();
   switch (screenSelectCurrent) {
@@ -68,6 +84,7 @@ void loop() {
       screenTimer();
       break;
   }
+  lastTimestamp = nowTimestamp;
   delay(100);
 }
 
@@ -76,24 +93,83 @@ void screenInfo() {
   char time[9];
   char date[11];
   char line[2][16];
+  char enabled[4];
+  char b = ' ';
+
+  if (booting) {
+    b = 'B';
+  }
+
   strftime(time, 9, "%H:%M:%S", &timeinfo);
   lcd.setCursor(0, 0);
-  sprintf(line[0], "Time: %s ", time);
+  if (powerPercent > 0) {
+    sprintf(line[0], "%s    %c On", time, b);
+  } else {
+    sprintf(line[0], "%s   %c Off", time, b);
+  }
   lcd.print(line[0]);
   lcd.setCursor(0, 1);
-  sprintf(line[1], "Power: %s%%    ", String(powerPercent).c_str());
+  sprintf(line[1], "%s%%->%s%%   ", String(powerPercent).c_str(), String(11 * voltageFeedback - 10).c_str());
   lcd.print(line[1]);
 }
 
-void setOutputPower() {
-  time_t now = getCurrentTimestamp();
-  if (lastTimestamp == now) {
+void setSwitches() {
+  analogWrite(switchTransformerPin, switchTransformer);
+  analogWrite(switchBallast1Pin, switchBallast1);
+  analogWrite(switchBallast2Pin, switchBallast2);
+  analogWrite(switchBallast3Pin, switchBallast3);
+}
+
+void disableSwitches() {
+  time_t nowTmp = nowTimestamp;
+  if (nowTimestamp != lastTimestamp) {
+    if (switchBallast1 == 0) {
+      switchBallast1 = 255;
+      return ;
+    }
+    if (switchBallast2 == 0) {
+      switchBallast2 = 255;
+      return ;
+    }
+    if (switchBallast3 == 0) {
+      switchBallast3 = 255;
+      return ;
+    }
+    if (switchTransformer == 0) {
+      switchTransformer = 255;
+      return ;
+    }
+  }
+}
+
+void enableSwitches() {
+  if (switchTransformer == 255) {
+    switchTransformer = 0;
     return ;
   }
-  float voltageFeedback;
+  if (nowTimestamp != lastTimestamp &&  booting == false) {
+    if ((11 * voltageFeedback - 10) >= 1.0) {
+      if (switchBallast1 == 255) {
+        switchBallast1 = 0;
+        return ;
+      }
+      if (switchBallast2 == 255) {
+        switchBallast2 = 0;
+        return ;
+      }
+      if (switchBallast3 == 255) {
+        switchBallast3 = 0;
+        return ;
+      }
+    }
+  }
+}
+
+void setOutputPower() {
+  if (lastTimestamp == nowTimestamp) {
+    return ;
+  }
   voltageFeedback = (analogRead(voltageFeedbackPin)*10)/(float)analogReadResolution;
-  Serial.println(voltage);
-  Serial.println(voltageFeedback);
   if (voltageFeedback >= ((powerPercent+10)/11)) {
     voltage += 1;
   } else {
@@ -102,10 +178,21 @@ void setOutputPower() {
   if (voltage < 0) voltage = 0;
   if (voltage > analogWriteResolution) voltage = analogWriteResolution;
   analogWrite(voltagePin, voltage);
-  lastTimestamp = now;
+  
+  if (booting) {
+    if ((11 * voltageFeedback - 10) < 0.0) {
+      booting = false;
+    }
+  }
 }
 
 void calculatePower() {
+  if (booting) {
+    enableSwitches();
+    powerPercent = 0;
+    return ;
+  }
+
   struct tm tmStart = getCurrentTm();
   tmStart.tm_hour = timerStartHour;
   tmStart.tm_min = timerStartMinute;
@@ -126,8 +213,18 @@ void calculatePower() {
 
   if (! ((timestampStart <= timestampNow) && (timestampStop >= timestampNow))) {
     powerPercent = 0;
+    disableSwitches();
+    prepareForBoot = true;
     return ;
   }
+
+  if (powerPercent == 0.0 && booting == false && prepareForBoot) {
+    booting = true;
+    prepareForBoot = false;
+    return ;
+  }
+
+  enableSwitches();
 
   time_t timestampstopstartdiff = timestampStop - timestampStart;
   float yPow;
@@ -261,7 +358,7 @@ void screenDate() {
   strftime(date, 11, "%Y/%m/%d", &timeinfo);
 
   lcd.setCursor(0, 0);
-  sprintf(line[0], "Time: %s ", time);
+  sprintf(line[0], "Time: %s  ", time);
   lcd.print(line[0]);
   lcd.setCursor(0, 1);
   sprintf(line[1], "Date: %s", date);
