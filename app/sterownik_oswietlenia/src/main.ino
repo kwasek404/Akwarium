@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <LiquidCrystal_I2C.h>
 #include <virtuabotixRTC.h>
 #include <time.h>
@@ -31,9 +32,21 @@ LiquidCrystal_I2C lcd(0x27,20,4);  // set the LCD address to 0x27 for a 16 chars
 virtuabotixRTC myRTC(6, 7, 8); //If you change the wiring change the pins here also
 int screenSelectCurrent = 0;
 int buttonRightState = LOW;
+int lastButtonRightState = LOW;
 int buttonSetState = LOW;
+int lastButtonSetState = LOW;
 int buttonMinusState = LOW;
+int lastButtonMinusState = LOW;
 int buttonPlusState = LOW;
+int lastButtonPlusState = LOW;
+
+unsigned long lastDebounceTime = 0;
+unsigned long debounceDelay = 50;
+unsigned long lastRightDebounceTime = 0;
+unsigned long lastSetDebounceTime = 0;
+unsigned long lastMinusDebounceTime = 0;
+unsigned long lastPlusDebounceTime = 0;
+
 time_t lastActivity = 0;
 bool backlightLast = false;
 int timerStartHour = 0;
@@ -54,6 +67,38 @@ int switchBallast1 = 255;
 int switchBallast2 = 255;
 int switchBallast3 = 255;
 
+unsigned long lastLoopTime = 0;
+const unsigned long loopInterval = 100; // ms, jak poprzednie delay()
+
+// State for editing screens
+bool editingTime = false;
+bool editingTimer = false;
+int editSelectPos = 0;
+
+// Function prototypes
+void screenInfo();
+void setSwitches();
+void disableSwitches();
+void enableSwitches();
+void setOutputPower();
+void calculatePower();
+void eepromLoad();
+void eepromSave();
+void screenTimer();
+void setScreenTimer();
+void screenDate();
+void adjustTimeDate(struct tm * timeinfo, int hour, int minute, int second, int year, int month, int day);
+void setScreenDate();
+void setButton();
+void screenSelect();
+bool getDigitalButton(int pin);
+struct tm getCurrentTm();
+time_t getCurrentTimestamp();
+void setLastActivity();
+void setScreenBacklight();
+
+
+
 void setup()
 {
   Serial.begin(9600);
@@ -66,26 +111,47 @@ void setup()
 }
 
 void loop() {
-  nowTimestamp = getCurrentTimestamp();
+  // --- Część pętli, która wykonuje się tak szybko, jak to możliwe ---
+  // Odczyt przycisków jest najważniejszy, aby nie przegapić wciśnięcia
   setButton();
-  screenSelect();
-  setScreenBacklight();
-  setSwitches();
-  calculatePower();
-  setOutputPower();
-  switch (screenSelectCurrent) {
-    case 0:
-      screenInfo();
-      break;
-    case 1:
-      screenDate();
-      break;
-    case 2:
-      screenTimer();
-      break;
+
+  // --- Część pętli, która wykonuje się co 'loopInterval' (100ms) ---
+  if (millis() - lastLoopTime >= loopInterval) {
+    lastLoopTime = millis();
+
+    nowTimestamp = getCurrentTimestamp();
+    screenSelect();
+    setScreenBacklight();
+    setSwitches();
+    calculatePower();
+    setOutputPower();
+    switch (screenSelectCurrent) {
+      case 0: // screenInfo
+        screenInfo();
+        break;
+      case 1: // screenDate
+        if (editingTime) {
+          setScreenDate();
+        } else {
+          screenDate();
+        }
+        break;
+      case 2: // screenTimer
+        if (editingTimer) {
+          setScreenTimer();
+        } else {
+          screenTimer();
+        }
+        break;
+    }
+    lastTimestamp = nowTimestamp;
+
+    // Reset button states after they have been processed in the current logic cycle
+    buttonRightState = LOW;
+    buttonSetState = LOW;
+    buttonMinusState = LOW;
+    buttonPlusState = LOW;
   }
-  lastTimestamp = nowTimestamp;
-  delay(100);
 }
 
 void screenInfo() {
@@ -93,12 +159,17 @@ void screenInfo() {
   char time[9];
   char date[11];
   char line[2][16];
+  char powerPercentStr[8];
+  char voltageFeedbackStr[8];
   char enabled[4];
   char b = ' ';
 
   if (booting) {
     b = 'B';
   }
+  
+  dtostrf(powerPercent, 4, 1, powerPercentStr);
+  dtostrf(11 * voltageFeedback - 10, 4, 1, voltageFeedbackStr);
 
   strftime(time, 9, "%H:%M:%S", &timeinfo);
   lcd.setCursor(0, 0);
@@ -109,7 +180,7 @@ void screenInfo() {
   }
   lcd.print(line[0]);
   lcd.setCursor(0, 1);
-  sprintf(line[1], "%s%%->%s%%   ", String(powerPercent).c_str(), String(11 * voltageFeedback - 10).c_str());
+  sprintf(line[1], "%s%%->%s%%   ", powerPercentStr, voltageFeedbackStr);
   lcd.print(line[1]);
 }
 
@@ -274,78 +345,71 @@ void screenTimer() {
   lcd.print(line[0]);
   lcd.setCursor(0, 1);
   lcd.print(line[1]);
-  if (buttonSetState == HIGH) setScreenTimer();
+  if (buttonSetState == HIGH) {
+    editingTimer = true;
+    editSelectPos = 0;
+  }
 }
 
 void setScreenTimer() {
   char timeStart[9];
   char timeStop[9];
-  int selectPos = 0;
   int menuSize = 6;
   char line[2][16];
-  bool display = true;
+  bool blink = (millis() % 1000) < 500; // Blink every 500ms
 
-  do {
-    setButton();
-    sprintf(timeStart, "%.2d:%.2d:%.2d", timerStartHour, timerStartMinute, timerStartSecond);
-    sprintf(timeStop, "%.2d:%.2d:%.2d", timerStopHour, timerStopMinute, timerStopSecond);
+  if (buttonSetState == HIGH) {
+    editingTimer = false;
+    eepromSave();
+    return;
+  }
 
-    if (buttonRightState == HIGH) {
-      selectPos += 1;
-      if (selectPos >= menuSize) {
-        selectPos = 0;
-      }
-    }
+  sprintf(timeStart, "%.2d:%.2d:%.2d", timerStartHour, timerStartMinute, timerStartSecond);
+  sprintf(timeStop, "%.2d:%.2d:%.2d", timerStopHour, timerStopMinute, timerStopSecond);
 
-    switch (selectPos) {
-      case 0:
-        if (!display) sprintf(timeStart, "  :%.2d:%.2d", timerStartMinute, timerStartSecond);
-        if (buttonPlusState == HIGH) timerStartHour += 1;
-        if (buttonMinusState == HIGH) timerStartHour += -1;
-        break;
-      case 1:
-        if (!display) sprintf(timeStart, "%.2d:  :%.2d", timerStartHour, timerStartSecond);
-        if (buttonPlusState == HIGH) timerStartMinute += 1;
-        if (buttonMinusState == HIGH) timerStartMinute += -1;
-        break;
-      case 2:
-        if (!display) sprintf(timeStart, "%.2d:%.2d:  ", timerStartHour, timerStartMinute);
-        if (buttonPlusState == HIGH) timerStartSecond += 1;
-        if (buttonMinusState == HIGH) timerStartSecond += -1;
-        break;
-      case 3:
-        if (!display) sprintf(timeStop, "  :%.2d:%.2d", timerStopMinute, timerStopSecond);
-        if (buttonPlusState == HIGH) timerStopHour += 1;
-        if (buttonMinusState == HIGH) timerStopHour += -1;
-        break;
-      case 4:
-        if (!display) sprintf(timeStop, "%.2d:  :%.2d", timerStopHour, timerStopSecond);
-        if (buttonPlusState == HIGH) timerStopMinute += 1;
-        if (buttonMinusState == HIGH) timerStopMinute += -1;
-        break;
-      case 5:
-        if (!display) sprintf(timeStop, "%.2d:%.2d:  ", timerStopHour, timerStopMinute);
-        if (buttonPlusState == HIGH) timerStopSecond += 1;
-        if (buttonMinusState == HIGH) timerStopSecond += -1;
-        break;
-    }
+  if (buttonRightState == HIGH) {
+    editSelectPos = (editSelectPos + 1) % menuSize;
+  }
 
-    if (display) {
-      display = false;
-    } else {
-      display = true;
-    }
+  switch (editSelectPos) {
+    case 0:
+      if (blink) sprintf(timeStart, "  :%.2d:%.2d", timerStartMinute, timerStartSecond);
+      if (buttonPlusState == HIGH) timerStartHour = (timerStartHour + 1) % 24;
+      if (buttonMinusState == HIGH) timerStartHour = (timerStartHour + 23) % 24;
+      break;
+    case 1:
+      if (blink) sprintf(timeStart, "%.2d:  :%.2d", timerStartHour, timerStartSecond);
+      if (buttonPlusState == HIGH) timerStartMinute = (timerStartMinute + 1) % 60;
+      if (buttonMinusState == HIGH) timerStartMinute = (timerStartMinute + 59) % 60;
+      break;
+    case 2:
+      if (blink) sprintf(timeStart, "%.2d:%.2d:  ", timerStartHour, timerStartMinute);
+      if (buttonPlusState == HIGH) timerStartSecond = (timerStartSecond + 1) % 60;
+      if (buttonMinusState == HIGH) timerStartSecond = (timerStartSecond + 59) % 60;
+      break;
+    case 3:
+      if (blink) sprintf(timeStop, "  :%.2d:%.2d", timerStopMinute, timerStopSecond);
+      if (buttonPlusState == HIGH) timerStopHour = (timerStopHour + 1) % 24;
+      if (buttonMinusState == HIGH) timerStopHour = (timerStopHour + 23) % 24;
+      break;
+    case 4:
+      if (blink) sprintf(timeStop, "%.2d:  :%.2d", timerStopHour, timerStopSecond);
+      if (buttonPlusState == HIGH) timerStopMinute = (timerStopMinute + 1) % 60;
+      if (buttonMinusState == HIGH) timerStopMinute = (timerStopMinute + 59) % 60;
+      break;
+    case 5:
+      if (blink) sprintf(timeStop, "%.2d:%.2d:  ", timerStopHour, timerStopMinute);
+      if (buttonPlusState == HIGH) timerStopSecond = (timerStopSecond + 1) % 60;
+      if (buttonMinusState == HIGH) timerStopSecond = (timerStopSecond + 59) % 60;
+      break;
+  }
 
-    sprintf(line[0], "Start: %s ", timeStart);
-    sprintf(line[1], "Stop:  %s ", timeStop);
-    lcd.setCursor(0, 0);
-    lcd.print(line[0]);
-    lcd.setCursor(0, 1);
-    lcd.print(line[1]);
-
-    delay(100);
-  } while (buttonSetState == LOW);
-  eepromSave();
+  sprintf(line[0], "Start: %s ", timeStart);
+  sprintf(line[1], "Stop:  %s ", timeStop);
+  lcd.setCursor(0, 0);
+  lcd.print(line[0]);
+  lcd.setCursor(0, 1);
+  lcd.print(line[1]);
 }
 
 void screenDate() {
@@ -364,7 +428,10 @@ void screenDate() {
   sprintf(line[1], "Date: %s", date);
   lcd.print(line[1]);
 
-  if (buttonSetState == HIGH) setScreenDate();
+  if (buttonSetState == HIGH) {
+    editingTime = true;
+    editSelectPos = 0;
+  }
 }
 
 void adjustTimeDate(struct tm * timeinfo, int hour, int minute, int second, int year, int month, int day) {
@@ -377,60 +444,54 @@ void setScreenDate() {
   char line[2][16];
   char timeFormat[] = "%H:%M:%S";
   char dateFormat[] = "%Y/%m/%d";
-  bool display = true;
-  int selectPos = 0;
+  bool blink = (millis() % 1000) < 500; // Blink every 500ms
   int menuSize = 6;
   struct tm timeinfo;
-  do {
-    setButton();
+
+  if (buttonSetState == HIGH) {
+    editingTime = false;
+    return;
+  }
+
     timeinfo = getCurrentTm();
     strftime(time, 9, timeFormat, &timeinfo);
     strftime(date, 11, dateFormat, &timeinfo);
 
     if (buttonRightState == HIGH) {
-      selectPos += 1;
-      if (selectPos >= menuSize) {
-        selectPos = 0;
-      }
+      editSelectPos = (editSelectPos + 1) % menuSize;
     }
 
-    switch (selectPos) {
+    switch (editSelectPos) {
       case 0:
-        if (!display) strftime(time, 9, "  :%M:%S", &timeinfo);
+        if (blink) strftime(time, 9, "  :%M:%S", &timeinfo);
         if (buttonPlusState == HIGH) adjustTimeDate(&timeinfo, 1, 0, 0, 0, 0, 0);
         if (buttonMinusState == HIGH) adjustTimeDate(&timeinfo, -1, 0, 0, 0, 0, 0);
         break;
       case 1:
-        if (!display) strftime(time, 9, "%H:  :%S", &timeinfo);
+        if (blink) strftime(time, 9, "%H:  :%S", &timeinfo);
         if (buttonPlusState == HIGH) adjustTimeDate(&timeinfo, 0, 1, 0, 0, 0, 0);
         if (buttonMinusState == HIGH) adjustTimeDate(&timeinfo, 0, -1, 0, 0, 0, 0);
         break;
       case 2:
-        if (!display) strftime(time, 9, "%H:%M:  ", &timeinfo);
+        if (blink) strftime(time, 9, "%H:%M:  ", &timeinfo);
         if (buttonPlusState == HIGH) adjustTimeDate(&timeinfo, 0, 0, 1, 0, 0, 0);
         if (buttonMinusState == HIGH) adjustTimeDate(&timeinfo, 0, 0, -1, 0, 0, 0);
         break;
       case 3:
-        if (!display) strftime(date, 11, "    /%m/%d", &timeinfo);
+        if (blink) strftime(date, 11, "    /%m/%d", &timeinfo);
         if (buttonPlusState == HIGH) adjustTimeDate(&timeinfo, 0, 0, 0, 1, 0, 0);
         if (buttonMinusState == HIGH) adjustTimeDate(&timeinfo, 0, 0, 0, -1, 0, 0);
         break;
       case 4:
-        if (!display) strftime(date, 11, "%Y/  /%d", &timeinfo);
+        if (blink) strftime(date, 11, "%Y/  /%d", &timeinfo);
         if (buttonPlusState == HIGH) adjustTimeDate(&timeinfo, 0, 0, 0, 0, 1, 0);
         if (buttonMinusState == HIGH) adjustTimeDate(&timeinfo, 0, 0, 0, 0, -1, 0);
         break;
       case 5:
-        if (!display) strftime(date, 11, "%Y/%m/  ", &timeinfo);
+        if (blink) strftime(date, 11, "%Y/%m/  ", &timeinfo);
         if (buttonPlusState == HIGH) adjustTimeDate(&timeinfo, 0, 0, 0, 0, 0, 1);
         if (buttonMinusState == HIGH) adjustTimeDate(&timeinfo, 0, 0, 0, 0, 0, -1);
         break;
-    }
-
-    if (display) {
-      display = false;
-    } else {
-      display = true;
     }
 
     lcd.setCursor(0, 0);
@@ -439,41 +500,82 @@ void setScreenDate() {
     lcd.setCursor(0, 1);
     sprintf(line[1], "Date: %s", date);
     lcd.print(line[1]);
-    delay(100);
-  } while (buttonSetState == LOW);
 }
 
 void setButton() {
-  buttonRightState = getDigitalButton(buttonRightPin);
-  buttonSetState = getDigitalButton(buttonSetPin);
-  buttonMinusState = getDigitalButton(buttonMinusPin);
-  buttonPlusState = getDigitalButton(buttonPlusPin);
+    // Button Right
+    int readingRight = getDigitalButton(buttonRightPin);
+    if (readingRight != lastButtonRightState) {
+        lastRightDebounceTime = millis();
+    }
+    if ((millis() - lastRightDebounceTime) > debounceDelay) {
+        if (readingRight != buttonRightState) {
+            if (readingRight == HIGH) {
+                buttonRightState = HIGH;
+            }
+        }
+    }
+    lastButtonRightState = readingRight;
+
+    // Button Set
+    int readingSet = getDigitalButton(buttonSetPin);
+    if (readingSet != lastButtonSetState) {
+        lastSetDebounceTime = millis();
+    }
+    if ((millis() - lastSetDebounceTime) > debounceDelay) {
+        if (readingSet != buttonSetState) {
+            if (readingSet == HIGH) {
+                buttonSetState = HIGH;
+            }
+        }
+    }
+    lastButtonSetState = readingSet;
+
+    // Button Minus
+    int readingMinus = getDigitalButton(buttonMinusPin);
+    if (readingMinus != lastButtonMinusState) {
+        lastMinusDebounceTime = millis();
+    }
+    if ((millis() - lastMinusDebounceTime) > debounceDelay) {
+        if (readingMinus != buttonMinusState) {
+            if (readingMinus == HIGH) {
+                buttonMinusState = HIGH;
+            }
+        }
+    }
+    lastButtonMinusState = readingMinus;
+
+    // Button Plus
+    int readingPlus = getDigitalButton(buttonPlusPin);
+    if (readingPlus != lastButtonPlusState) {
+        lastPlusDebounceTime = millis();
+    }
+    if ((millis() - lastPlusDebounceTime) > debounceDelay) {
+        if (readingPlus != buttonPlusState) {
+            if (readingPlus == HIGH) {
+                buttonPlusState = HIGH;
+            }
+        }
+    }
+    lastButtonPlusState = readingPlus;
 }
 
 void screenSelect() {
-  if (buttonRightState == HIGH) {
-    // Serial.println("+");
-    screenSelectCurrent += 1;
+  if (editingTime || editingTimer) {
+    return; // Don't change screen while editing
   }
-  if (screenSelectCurrent >= screenSelectSize) {
-    screenSelectCurrent = 0;
+  if (buttonRightState == HIGH) {
+    screenSelectCurrent = (screenSelectCurrent + 1) % screenSelectSize;
   }
 }
 
 bool getDigitalButton(int pin) {
   int state = digitalRead(pin);
   if (state == HIGH) {
-    setLastActivity();
-    int afterState = HIGH;
-    while (afterState == HIGH) {
-      afterState = digitalRead(pin);
-      delay(10);
-    }
+    setLastActivity(); // Any press wakes up the backlight timer
+    return HIGH;
   }
-  if (!backlightLast) {
-    return LOW;
-  }
-  return state;
+  return LOW;
 }
 
 struct tm getCurrentTm() {
