@@ -2,26 +2,22 @@
 #define TIME_CONTROLLER_H
 
 #include <virtuabotixRTC.h>
-#include <Timezone.h>
+#include "Debug.h"
 #include <TimeLib.h>
 #include "Constants.h"
 #include "Settings.h"
-
-// Europe/Warsaw Time Zone Rules
-TimeChangeRule CEST = {"CEST", Last, Sun, Mar, 2, 120}; // Central European Summer Time
-TimeChangeRule CET = {"CET", Last, Sun, Oct, 3, 60};    // Central European Standard Time
-Timezone warsawTZ(CEST, CET);
+#include "Timezones.h"
 
 class TimeController {
 public:
     TimeController(uint8_t clk, uint8_t dat, uint8_t rst) : rtc(clk, dat, rst) {}
 
     void begin() {
-        // Set TimeLib to sync with our RTC reading function.
-        // This needs to be a static function or a lambda without captures.
-        // For simplicity, we will manually sync in the main loop if needed,
-        // or rely on the fact that we get the time from the RTC each loop.
-        // The setSyncProvider call is removed as it's problematic with classes.
+        // Perform initial time sync from RTC to TimeLib at startup.
+        // This ensures that the system time is correct from the very beginning.
+        time_t initialTime = nowUTC();
+        ::setTime(initialTime);
+        DEBUG_PRINTF("Time: Initial sync from RTC. UTC timestamp: %lu\n", initialTime);
     }
 
     time_t nowUTC() {
@@ -43,15 +39,26 @@ public:
         return utc;
     }
 
-    void setTime(int year, int month, int day, int hour, int minute, int second) {
-        // Day of week is not used by this RTC module, so we pass 0
-        rtc.setDS1302Time(second, minute, hour, 0, day, month, year);
+    void setTime(int year, int month, int day, int hour, int minute, int second, const Settings& settings) {
+        tmElements_t tm;
+        tm.Year = year - 1970;
+        tm.Month = month;
+        tm.Day = day;
+        tm.Hour = hour;
+        tm.Minute = minute;
+        tm.Second = second;
+        time_t localTime = makeTime(tm);
+        
+        time_t utcTime = (settings.timezone == TZ_WARSAW) ? warsawTZ.toUTC(localTime) : localTime;
+
+        // Day of week is not used by this RTC module, so we pass 0.
+        rtc.setDS1302Time(::second(utcTime), ::minute(utcTime), ::hour(utcTime), 0, ::day(utcTime), ::month(utcTime), ::year(utcTime));
     }
 
-    void adjustTime(long seconds) {
-        // When adjusting, we adjust the UTC time stored in the RTC
-        time_t newTime = nowUTC() + seconds;
-        setTime(year(newTime), month(newTime), day(newTime), hour(newTime), minute(newTime), second(newTime));
+    void adjustTime(long adjustment, const Settings& settings) {
+        time_t newTime = nowUTC() + adjustment; // Adjustment is applied to UTC
+        DEBUG_PRINTF("Time: Adjusting time by %ld seconds. New UTC: %lu\n", adjustment, newTime);
+        rtc.setDS1302Time(::second(newTime), ::minute(newTime), ::hour(newTime), 0, ::day(newTime), ::month(newTime), ::year(newTime));
     }
 private:
     virtuabotixRTC rtc;

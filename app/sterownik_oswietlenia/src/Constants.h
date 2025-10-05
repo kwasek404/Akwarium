@@ -36,6 +36,8 @@ const int EEPROM_TIMEZONE_ADDR = 4;
 // Behavior Constants
 const unsigned long ACTIVITY_BACKLIGHT_SECONDS = 60;
 const unsigned long BUTTON_DEBOUNCE_DELAY = 50; // ms
+const unsigned long LONG_PRESS_DELAY = 500; // ms to trigger a long press
+const unsigned long HOLD_REPEAT_DELAY = 150; // ms between repeats when holding
 const unsigned long SEQUENTIAL_SWITCH_DELAY_MS = 1000; // 1 second between switching ballasts
 
 // Lighting Control

@@ -4,11 +4,13 @@
 #include "Constants.h"
 
 enum Button {
-    BTN_NONE,
-    BTN_RIGHT,
-    BTN_SET,
-    BTN_MINUS,
-    BTN_PLUS
+    BTN_NONE, BTN_RIGHT, BTN_SET, BTN_MINUS, BTN_PLUS
+};
+
+enum ButtonEvent {
+    EVENT_NONE,
+    EVENT_PRESS, // Short press
+    EVENT_HOLD   // Long press / repeat
 };
 
 class InputManager {
@@ -20,63 +22,70 @@ public:
         pinMode(BUTTON_PLUS_PIN, INPUT);
     }
 
-    Button getPressedButton() {
-        // Check each button independently. This prevents one button press from masking another.
-        if (isButtonPressed(BUTTON_RIGHT_PIN, lastRightState, lastReadingRight, lastRightDebounceTime)) {
-            return BTN_RIGHT;
+    ButtonEvent checkButton(Button btn, ButtonEvent& event) {
+        event = EVENT_NONE;
+        uint8_t index = btn - 1;
+        bool currentState = (digitalRead(buttonPins[index]) == HIGH);
+
+        if (currentState != buttonStates[index].lastReading) {
+            buttonStates[index].lastDebounceTime = millis();
         }
-        if (isButtonPressed(BUTTON_SET_PIN, lastSetState, lastReadingSet, lastSetDebounceTime)) {
-            return BTN_SET;
-        }
-        if (isButtonPressed(BUTTON_MINUS_PIN, lastMinusState, lastReadingMinus, lastMinusDebounceTime)) {
-            return BTN_MINUS;
-        }
-        if (isButtonPressed(BUTTON_PLUS_PIN, lastPlusState, lastReadingPlus, lastPlusDebounceTime)) {
-            return BTN_PLUS;
+        buttonStates[index].lastReading = currentState;
+
+        if ((millis() - buttonStates[index].lastDebounceTime) > BUTTON_DEBOUNCE_DELAY) {
+            if (currentState && !buttonStates[index].isPressed) { // Button just pressed
+                buttonStates[index].isPressed = true;
+                buttonStates[index].pressTime = millis();
+                event = EVENT_PRESS;
+            } else if (currentState && buttonStates[index].isPressed) { // Button is being held
+                if ((millis() - buttonStates[index].pressTime) > LONG_PRESS_DELAY) {
+                    if ((millis() - buttonStates[index].lastRepeatTime) > HOLD_REPEAT_DELAY) {
+                        buttonStates[index].lastRepeatTime = millis();
+                        event = EVENT_HOLD;
+                    }
+                }
+            } else if (!currentState && buttonStates[index].isPressed) { // Button released
+                buttonStates[index].isPressed = false;
+            }
         }
 
-        return BTN_NONE;
+        return event;
     }
 
 private:
-    int lastRightState = LOW;
-    int lastSetState = LOW;
-    int lastMinusState = LOW;
-    int lastPlusState = LOW;
+    struct ButtonState {
+        bool isPressed = false;
+        bool lastReading = false;
+        unsigned long pressTime = 0;
+        unsigned long lastDebounceTime = 0;
+        unsigned long lastRepeatTime = 0;
+    };
 
-    unsigned long lastRightDebounceTime = 0;
-    unsigned long lastSetDebounceTime = 0;
-    unsigned long lastMinusDebounceTime = 0;
-    unsigned long lastPlusDebounceTime = 0;
-    
-    // Add last reading state to correctly detect changes
-    int lastReadingRight = LOW;
-    int lastReadingSet = LOW;
-    int lastReadingMinus = LOW;
-    int lastReadingPlus = LOW;
+    const uint8_t buttonPins[4] = {BUTTON_RIGHT_PIN, BUTTON_SET_PIN, BUTTON_MINUS_PIN, BUTTON_PLUS_PIN};
+    ButtonState buttonStates[4];
+};
 
-    bool isButtonPressed(uint8_t pin, int& lastState, int& lastReading, unsigned long& lastDebounceTime) {
-        int reading = digitalRead(pin);
+struct ButtonAction {
+    Button button;
+    ButtonEvent event;
+};
 
-        // Reset the debounce timer whenever the input changes
-        if (reading != lastReading) {
-            lastDebounceTime = millis();
-        }
-        lastReading = reading;
+class InputProcessor {
+public:
+    InputProcessor(InputManager& manager) : inputManager(manager) {}
 
-        if ((millis() - lastDebounceTime) > BUTTON_DEBOUNCE_DELAY) {
-            // If the reading has been stable for the debounce period,
-            // and it's different from the last registered state, update the state.
-            if (reading != lastState) {
-                lastState = reading;
-                // A press is registered only on the transition from LOW to HIGH
-                if (lastState == HIGH) {
-                    return true;
-                }
+    ButtonAction getAction() {
+        ButtonEvent event;
+        for (int i = 0; i < 4; i++) {
+            Button btn = (Button)(i + 1);
+            if (inputManager.checkButton(btn, event) != EVENT_NONE) {
+                return {btn, event};
             }
         }
-        return false;
+        return {BTN_NONE, EVENT_NONE};
     }
+private:
+    InputManager& inputManager;
 };
 
 #endif // INPUT_MANAGER_H

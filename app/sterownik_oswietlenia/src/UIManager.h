@@ -1,6 +1,7 @@
 #ifndef UI_MANAGER_H
 #define UI_MANAGER_H
 
+#include "Debug.h"
 #include "DisplayController.h"
 #include "TimeController.h"
 #include "LightingController.h"
@@ -10,14 +11,15 @@
 
 class UIManager {
 public:
-    UIManager(DisplayController& display, TimeController& time, LightingController& lighting, InputManager& input, Settings& settings)
-        : display(display), time(time), lighting(lighting), input(input), settings(settings), currentScreen(0), lastUpdate(0) {}
+    UIManager(DisplayController& display, TimeController& time, LightingController& lighting, InputProcessor& input, Settings& settings)
+        : display(display), time(time), lighting(lighting), inputProcessor(input), settings(settings), currentScreen(0), lastUpdate(0) {}
 
     void update() {
-        Button btn = input.getPressedButton();
-        if (btn != BTN_NONE) {
+        ButtonAction action = inputProcessor.getAction();
+        if (action.button != BTN_NONE) {
+            DEBUG_PRINTF("UI: Button %d, Event %d\n", action.button, action.event);
             display.recordActivity();
-            handleInput(btn);
+            handleInput(action);
         }
 
         // Refresh screen periodically
@@ -28,6 +30,11 @@ public:
             }
             lastUpdate = millis();
         }
+
+        // Handle blinking in edit mode
+        if (editMode != EditMode::NONE) {
+            handleBlinking();
+        }
     }
 
 private:
@@ -36,43 +43,50 @@ private:
     DisplayController& display;
     TimeController& time;
     LightingController& lighting;
-    InputManager& input;
+    InputProcessor& inputProcessor;
     Settings& settings;
 
     int currentScreen;
     EditMode editMode = EditMode::NONE;
     int editPos = 0;
     unsigned long lastUpdate;
+    bool blinkState = false;
 
-    void handleInput(Button btn) {
+    void handleInput(ButtonAction action) {
         if (editMode != EditMode::NONE) {
-            handleEditInput(btn);
-            drawCurrentScreen(false); // Redraw without clearing
+            handleEditInput(action);
+            drawCurrentScreen(false);
             return;
         }
 
-        switch (btn) {
+        // Only handle short presses for navigation
+        if (action.event != EVENT_PRESS) return;
+
+        switch (action.button) {
             case BTN_RIGHT:
+                DEBUG_PRINTF("UI: Screen change %d -> %d\n", currentScreen, (currentScreen + 1) % MAIN_MENU_SIZE);
                 currentScreen = (currentScreen + 1) % MAIN_MENU_SIZE;
-                drawCurrentScreen(true); // Clear screen on view change
+                drawCurrentScreen(true);
                 break;
             case BTN_SET:
                 if (currentScreen == 1) editMode = EditMode::TIME;
                 if (currentScreen == 2) editMode = EditMode::TIMER;
+                DEBUG_PRINTF("UI: Entering edit mode %d\n", editMode);
                 editPos = 0;
-                drawCurrentScreen(true); // Clear screen when entering edit mode
+                drawCurrentScreen(true);
                 break;
             case BTN_PLUS: // Allow changing timezone without entering edit mode
             case BTN_MINUS:
-                if (currentScreen == 3) handleTimezoneEdit();
+                if (currentScreen == 3) handleTimezoneEdit(action.button);
                 break;
             default:
                 break;
         }
     }
 
-    void handleEditInput(Button btn) {
-        if (btn == BTN_SET) {
+    void handleEditInput(ButtonAction action) {
+        if (action.button == BTN_SET && action.event == EVENT_PRESS) {
+            DEBUG_PRINTLN("UI: Exiting edit mode.");
             editMode = EditMode::NONE;
             settings.save(); // Save settings on exit
             drawCurrentScreen(true); // Clear screen on exiting edit mode
@@ -80,35 +94,39 @@ private:
         }
 
         if (editMode == EditMode::TIME) {
-            handleTimeEdit(btn);
+            handleTimeEdit(action);
         } else if (editMode == EditMode::TIMER) {
-            handleTimerEdit(btn);
+            handleTimerEdit(action);
         }
     }
 
-    void handleTimeEdit(Button btn) {
+    void handleTimeEdit(ButtonAction action) {
         long adjustment = 0;
-        if (btn == BTN_RIGHT) editPos = (editPos + 1) % 6;
+        if (action.button == BTN_RIGHT && action.event == EVENT_PRESS) {
+            editPos = (editPos + 1) % 6;
+        }
         
-        if (btn == BTN_PLUS || btn == BTN_MINUS) {
-            int dir = (btn == BTN_PLUS) ? 1 : -1;
+        if (action.button == BTN_PLUS || action.button == BTN_MINUS) {
+            int dir = (action.button == BTN_PLUS) ? 1 : -1;
             switch (editPos) {
                 case 0: adjustment = dir * 3600L; break; // Hour
                 case 1: adjustment = dir * 60L; break;   // Minute
                 case 2: adjustment = dir * 1L; break;    // Second
-                case 3: time.adjustTime(dir * 365 * 24 * 3600L); return; // Year
-                case 4: time.adjustTime(dir * 30 * 24 * 3600L); return; // Month (approx)
-                case 5: time.adjustTime(dir * 24 * 3600L); return; // Day
+                case 3: adjustment = dir * 365 * 24 * 3600L; break; // Year
+                case 4: adjustment = dir * 30 * 24 * 3600L; break; // Month (approx)
+                case 5: adjustment = dir * 24 * 3600L; break; // Day
             }
-            time.adjustTime(adjustment);
+            time.adjustTime(adjustment, settings);
         }
     }
 
-    void handleTimerEdit(Button btn) {
-        if (btn == BTN_RIGHT) editPos = (editPos + 1) % 4;
+    void handleTimerEdit(ButtonAction action) {
+        if (action.button == BTN_RIGHT && action.event == EVENT_PRESS) {
+            editPos = (editPos + 1) % 4;
+        }
 
-        if (btn == BTN_PLUS || btn == BTN_MINUS) {
-            int dir = (btn == BTN_PLUS) ? 1 : -1;
+        if (action.button == BTN_PLUS || action.button == BTN_MINUS) {
+            int dir = (action.button == BTN_PLUS) ? 1 : -1;
             switch (editPos) {
                 case 0: settings.startHour = (settings.startHour + dir + 24) % 24; break;
                 case 1: settings.startMinute = (settings.startMinute + dir + 60) % 60; break;
@@ -118,7 +136,7 @@ private:
         }
     }
 
-    void handleTimezoneEdit() {
+    void handleTimezoneEdit(Button btn) {
         if (settings.timezone == TZ_UTC) {
             settings.timezone = TZ_WARSAW;
         } else {
@@ -126,6 +144,44 @@ private:
         }
         settings.save();
         drawCurrentScreen(false); // Redraw without clearing
+    }
+
+    void handleBlinking() {
+        bool newBlinkState = (millis() / 400) % 2 == 0;
+        if (newBlinkState == blinkState) return; // No change in blink state
+
+        blinkState = newBlinkState;
+        time_t t = time.toLocal(time.nowUTC(), settings);
+        char buffer[5];
+        char space_buffer[5];
+
+        if (editMode == EditMode::TIME) {
+            const uint8_t positions[6][2] = {{6, 0}, {9, 0}, {12, 0}, {6, 1}, {11, 1}, {14, 1}};
+            const uint8_t lengths[6] = {2, 2, 2, 4, 2, 2};
+            const int values[6] = {hour(t), minute(t), second(t), year(t), month(t), day(t)};
+            const char* formats[6] = {"%02d", "%02d", "%02d", "%04d", "%02d", "%02d"};
+
+            if (blinkState) {
+                memset(space_buffer, ' ', lengths[editPos]);
+                space_buffer[lengths[editPos]] = '\0';
+                display.print(positions[editPos][0], positions[editPos][1], space_buffer);
+            } else {
+                snprintf(buffer, sizeof(buffer), formats[editPos], values[editPos]);
+                display.print(positions[editPos][0], positions[editPos][1], buffer);
+            }
+        } else if (editMode == EditMode::TIMER) {
+            const uint8_t positions[4][2] = {{7, 0}, {10, 0}, {7, 1}, {10, 1}};
+            const int values[4] = {settings.startHour, settings.startMinute, settings.stopHour, settings.stopMinute};
+
+            if (blinkState) {
+                memset(space_buffer, ' ', 2);
+                space_buffer[2] = '\0';
+                display.print(positions[editPos][0], positions[editPos][1], space_buffer);
+            } else {
+                snprintf(buffer, sizeof(buffer), "%02d", values[editPos]);
+                display.print(positions[editPos][0], positions[editPos][1], buffer);
+            }
+        }
     }
 
     void drawCurrentScreen(bool shouldClear) {
@@ -159,43 +215,23 @@ private:
         char buffer[21];
         time_t t = time.toLocal(time.nowUTC(), settings);
         
-        // Always draw the full text first
         snprintf(buffer, sizeof(buffer), "Time: %02d:%02d:%02d ", hour(t), minute(t), second(t));
         display.print(0, 0, buffer);
         snprintf(buffer, sizeof(buffer), "Date: %04d-%02d-%02d", year(t), month(t), day(t));
         display.print(0, 1, buffer);
 
-        // Then, if in edit mode, overwrite the blinking part with spaces
-        if (editMode == EditMode::TIME && (millis() / 400) % 2 == 0) {
-            switch (editPos) {
-                case 0: display.print(6, 0, "  "); break;  // Hour
-                case 1: display.print(9, 0, "  "); break;  // Minute
-                case 2: display.print(12, 0, "  "); break; // Second
-                case 3: display.print(6, 1, "    "); break; // Year
-                case 4: display.print(11, 1, "  "); break; // Month
-                case 5: display.print(14, 1, "  "); break; // Day
-            }
-        }
+        blinkState = false; // Force redraw of value on screen change
     }
 
     void drawTimerScreen() {
         char buffer[21];
 
-        // Always draw the full text first
         snprintf(buffer, sizeof(buffer), "Start: %02d:%02d     ", settings.startHour, settings.startMinute);
         display.print(0, 0, buffer);
         snprintf(buffer, sizeof(buffer), "Stop:  %02d:%02d     ", settings.stopHour, settings.stopMinute);
         display.print(0, 1, buffer);
 
-        // Then, if in edit mode, overwrite the blinking part with spaces
-        if (editMode == EditMode::TIMER && (millis() / 400) % 2 == 0) {
-            switch (editPos) {
-                case 0: display.print(7, 0, "  "); break; // Start Hour
-                case 1: display.print(10, 0, "  "); break; // Start Minute
-                case 2: display.print(7, 1, "  "); break; // Stop Hour
-                case 3: display.print(10, 1, "  "); break; // Stop Minute
-            }
-        }
+        blinkState = false; // Force redraw of value on screen change
     }
 
     void drawTimezoneScreen() {

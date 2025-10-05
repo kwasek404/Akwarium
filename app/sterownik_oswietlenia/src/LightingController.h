@@ -1,11 +1,15 @@
 #ifndef LIGHTING_CONTROLLER_H
 #define LIGHTING_CONTROLLER_H
 
+#include "Debug.h"
 #include "Constants.h"
 #include "Settings.h"
 #include <TimeLib.h>
 
 class LightingController {
+private:
+    static constexpr float MIN_POWER_PERCENT = 1.0f; // Minimum power before shutting down
+
 public:
     LightingController() {
         pinMode(VOLTAGE_OUTPUT_PIN, OUTPUT);
@@ -30,24 +34,30 @@ public:
 
     float getCurrentPowerPercent() const { return currentPowerPercent; }
     float getFeedbackVoltagePercent() const {
-        // Formula from original code: 11 * voltageFeedback - 10
-        // voltageFeedback = (analogRead * 10) / 1023
-        // So, (11 * (analogRead * 10) / 1023) - 10
-        float feedback = (analogRead(VOLTAGE_FEEDBACK_PIN) * 10.0f) / ANALOG_READ_RESOLUTION;
-        return 11.0f * feedback - 10.0f;
+        // Assuming a 5V ADC reference and a voltage divider that scales 0-10V from the lamp to 0-5V for the Arduino.
+        // So, the actual voltage is (analogRead / 1023) * 5V * 2.
+        float measuredVoltage = (analogRead(VOLTAGE_FEEDBACK_PIN) / (float)ANALOG_READ_RESOLUTION) * 5.0f * 2.0f;
+
+        // The formula y = 11.11x - 11.11 maps 1V->0% and 10V->100%.
+        // Let's adjust it slightly to handle the 1-10V range mapping to 0-100% power.
+        // If 1V -> 0%, 10V -> 100%, then Power = (Voltage - 1) * (100 / 9)
+        float power = (measuredVoltage - 1.0f) * (100.0f / 9.0f);
+
+        return constrain(power, 0.0f, 100.0f);
     }
 
     bool isSynchronizing() const {
         // Consider it synchronizing if the difference between target and actual power is significant
         float error = targetPowerPercent - getFeedbackVoltagePercent();
-        return abs(error) > 5.0f; // 5% threshold
+        return abs(error) > 2.0f; // 2% threshold for stabilization
     }
 
 private:
-    enum class State { OFF, RAMPING_UP, ON, RAMPING_DOWN, BOOTING };
+    enum class State { OFF, STARTING, STABILIZING, RUNNING, STOPPING };
     State state = State::OFF;
     
     float targetPowerPercent = 0.0f;
+    float lastLoggedTarget = -1.0f;
     float currentPowerPercent = 0.0f;
     int outputVoltage = 0;
     unsigned long lastSwitchTime = 0;
@@ -89,66 +99,109 @@ private:
 
         // Sinusoidal curve for natural lighting
         targetPowerPercent = sin(phase * PI) * 100.0f;
-        if (targetPowerPercent > 100.0f) targetPowerPercent = 100.0f;
-        if (targetPowerPercent < 0.0f) targetPowerPercent = 0.0f;
+
+        // Clamp to valid range and handle shutdown threshold
+        if (targetPowerPercent < MIN_POWER_PERCENT) {
+            targetPowerPercent = 0.0f;
+        } else {
+            targetPowerPercent = constrain(targetPowerPercent, 0.0f, 100.0f);
+        }
+
+        if (abs(targetPowerPercent - lastLoggedTarget) > 0.5f) {
+            DEBUG_PRINTF("Lighting: New target power: %.2f%%\n", targetPowerPercent);
+            lastLoggedTarget = targetPowerPercent;
+        }
     }
 
     void manageSwitches() {
-        bool shouldBeOn = targetPowerPercent > 0.0f;
+        bool shouldBeOn = targetPowerPercent >= MIN_POWER_PERCENT;
         unsigned long currentTime = millis();
 
-        if (shouldBeOn) {
-            // Turn on transformer first
-            digitalWrite(SWITCH_TRANSFORMER_PIN, LOW);
+        switch (state) {
+            case State::OFF:
+                if (shouldBeOn) {
+                    DEBUG_PRINTLN("Lighting: State OFF -> STARTING");
+                    state = State::STARTING;
+                    lastSwitchTime = currentTime;
+                    digitalWrite(SWITCH_TRANSFORMER_PIN, LOW); // Turn on transformer
+                }
+                break;
 
-            // Sequentially turn on ballasts after a delay
-            if (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
-                if (ballastsOn == 0) {
-                    digitalWrite(SWITCH_BALLAST_1_PIN, LOW);
-                    ballastsOn = 1;
-                    lastSwitchTime = currentTime;
-                } else if (ballastsOn == 1) {
-                    digitalWrite(SWITCH_BALLAST_2_PIN, LOW);
-                    ballastsOn = 2;
-                    lastSwitchTime = currentTime;
-                } else if (ballastsOn == 2) {
-                    digitalWrite(SWITCH_BALLAST_3_PIN, LOW);
-                    ballastsOn = 3;
+            case State::STARTING:
+                // Wait for transformer to power up before stabilizing voltage
+                if (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
+                    DEBUG_PRINTLN("Lighting: State STARTING -> STABILIZING");
+                    state = State::STABILIZING;
                 }
-            }
-        } else {
-            // Turn off in reverse order
-            if (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
-                 if (ballastsOn == 3) {
-                    digitalWrite(SWITCH_BALLAST_3_PIN, HIGH);
-                    ballastsOn = 2;
+                break;
+
+            case State::STABILIZING:
+                if (!shouldBeOn) {
+                    DEBUG_PRINTLN("Lighting: State STABILIZING -> STOPPING");
+                    state = State::STOPPING;
                     lastSwitchTime = currentTime;
-                } else if (ballastsOn == 2) {
-                    digitalWrite(SWITCH_BALLAST_2_PIN, HIGH);
-                    ballastsOn = 1;
+                    break;
+                }
+                // Wait for voltage to stabilize before turning on ballasts
+                if (!isSynchronizing()) {
+                    DEBUG_PRINTLN("Lighting: State STABILIZING -> RUNNING (Voltage stabilized)");
+                    state = State::RUNNING;
+                    lastSwitchTime = currentTime; // Reset timer for ballast switching
+                }
+                break;
+
+            case State::RUNNING:
+                if (!shouldBeOn) {
+                    DEBUG_PRINTLN("Lighting: State RUNNING -> STOPPING");
+                    state = State::STOPPING;
                     lastSwitchTime = currentTime;
-                } else if (ballastsOn == 1) {
-                    digitalWrite(SWITCH_BALLAST_1_PIN, HIGH);
-                    ballastsOn = 0;
+                    break;
+                }
+                // Sequentially turn on ballasts
+                if (ballastsOn < 3 && (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS)) {
+                    DEBUG_PRINTF("Lighting: Turning on ballast #%d\n", ballastsOn + 1);
+                    if (ballastsOn == 0) digitalWrite(SWITCH_BALLAST_1_PIN, LOW);
+                    if (ballastsOn == 1) digitalWrite(SWITCH_BALLAST_2_PIN, LOW);
+                    if (ballastsOn == 2) digitalWrite(SWITCH_BALLAST_3_PIN, LOW);
+                    ballastsOn++;
                     lastSwitchTime = currentTime;
+                }
+                break;
+
+            case State::STOPPING:
+                if (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
+                    if (ballastsOn > 0) {
+                        // Sequentially turn off ballasts
+                        DEBUG_PRINTF("Lighting: Turning off ballast #%d\n", ballastsOn);
+                        if (ballastsOn == 3) digitalWrite(SWITCH_BALLAST_3_PIN, HIGH);
+                        if (ballastsOn == 2) digitalWrite(SWITCH_BALLAST_2_PIN, HIGH);
+                        if (ballastsOn == 1) digitalWrite(SWITCH_BALLAST_1_PIN, HIGH);
+                        ballastsOn--;
+                        lastSwitchTime = currentTime;
+                    }
                 } else if (ballastsOn == 0) {
+                    // All ballasts are off, now turn off transformer
+                    DEBUG_PRINTLN("Lighting: All ballasts off. Turning off transformer. State -> OFF");
                     digitalWrite(SWITCH_TRANSFORMER_PIN, HIGH);
+                    state = State::OFF;
                 }
-            }
+                break;
         }
     }
 
     void regulateOutputVoltage() {
-        currentPowerPercent = targetPowerPercent; // For simplicity, we can add smoothing later
-        
+        // Smoothly approach the target power
+        currentPowerPercent += (targetPowerPercent - currentPowerPercent) * 0.1f;
+
         float feedbackPercent = getFeedbackVoltagePercent();
         float error = currentPowerPercent - feedbackPercent;
 
-        // Simple proportional controller to adjust voltage
+        // Simple proportional controller to adjust PWM output
         outputVoltage += (int)(error * VOLTAGE_KP);
-
         outputVoltage = constrain(outputVoltage, 0, ANALOG_WRITE_RESOLUTION);
-        analogWrite(VOLTAGE_OUTPUT_PIN, outputVoltage);
+
+        // Inverted logic: higher PWM value -> faster capacitor discharge -> lower brightness
+        analogWrite(VOLTAGE_OUTPUT_PIN, ANALOG_WRITE_RESOLUTION - outputVoltage);
     }
 };
 
