@@ -21,19 +21,20 @@ UIManager uiManager(displayController, timeController, lightingController, input
 
 void setup() {
     Serial.begin(9600);
-    DEBUG_PRINTLN("\n\n--- Aquarium Controller Starting ---");
 
     // Initialize hardware and load settings
-    DEBUG_PRINTLN("Initializing Display...");
     displayController.begin();
-    DEBUG_PRINTLN("Initializing Time...");
     timeController.begin();
-    DEBUG_PRINTLN("Loading Settings...");
     settings.load();
     
-    displayController.print(0, 0, "Aquarium Controller");
-    displayController.print(0, 1, "Starting...");
-    delay(2000);
+    displayController.print(0, 0, "Aquarium Ctrl PRO");
+    displayController.print(0, 1, "Stabilizing...");
+    
+    // Wait for hardware to stabilize before activating power components
+    delay(1000);
+    lightingController.begin(); // Safely turn on the 1-10V transformer
+    
+    delay(500); // Visual pause
     displayController.clear();
 }
 
