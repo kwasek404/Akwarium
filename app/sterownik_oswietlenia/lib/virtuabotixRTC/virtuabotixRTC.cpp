@@ -686,7 +686,6 @@ void virtuabotixRTC::updateTime() {                                             
                                                                                                          //|    |
   DS1302_clock_burst_read( (uint8_t *) &rtc);               // Read all clock data at once (burst mode). //|    |
                                                                                                          //|    |
-  char buffer[80];                                          // the code uses 70 characters.              //|    |
   seconds     = ( rtc.Seconds10  * 10 ) + rtc. Seconds;                                                  //|    |
   minutes     = ( rtc. Minutes10 * 10 ) + rtc.Minutes;                                                   //|    |
   hours       = ( rtc.h24.Hour10 * 10 ) + rtc.h24.Hour;                                                  //|    |

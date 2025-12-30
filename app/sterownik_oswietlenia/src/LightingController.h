@@ -29,7 +29,18 @@ public:
     void update(time_t now, const Settings& settings) {
         calculateTargetPower(now, settings);
         manageSwitches();
-        regulateOutputVoltage();
+
+        // After manageSwitches, the state might be OFF.
+        // If so, don't try to regulate voltage on a circuit that is now powered down.
+        if (state == State::OFF) {
+            // Set PWM to a safe, idle state. Per user request, try setting to 0 (max brightness signal)
+            // to see if it puts the circuit in a more stable state before power-off.
+            analogWrite(VOLTAGE_OUTPUT_PIN, 0);
+            outputVoltage = 0;
+            currentPowerPercent = 0;
+        } else {
+            regulateOutputVoltage();
+        }
     }
 
     float getCurrentPowerPercent() const { return currentPowerPercent; }
@@ -169,9 +180,10 @@ private:
                 break;
 
             case State::STOPPING:
-                if (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
-                    if (ballastsOn > 0) {
-                        // Sequentially turn off ballasts
+                // This refactored logic ensures a delay after the last ballast is turned off.
+                if (ballastsOn > 0) {
+                    // Still ballasts to turn off
+                    if (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
                         DEBUG_PRINTF("Lighting: Turning off ballast #%d\n", ballastsOn);
                         if (ballastsOn == 3) digitalWrite(SWITCH_BALLAST_3_PIN, HIGH);
                         if (ballastsOn == 2) digitalWrite(SWITCH_BALLAST_2_PIN, HIGH);
@@ -179,11 +191,13 @@ private:
                         ballastsOn--;
                         lastSwitchTime = currentTime;
                     }
-                } else if (ballastsOn == 0) {
-                    // All ballasts are off, now turn off transformer
-                    DEBUG_PRINTLN("Lighting: All ballasts off. Turning off transformer. State -> OFF");
-                    digitalWrite(SWITCH_TRANSFORMER_PIN, HIGH);
-                    state = State::OFF;
+                } else {
+                    // All ballasts are off, wait for a delay then turn off the transformer
+                    if (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
+                        DEBUG_PRINTLN("Lighting: All ballasts off. Turning off transformer. State -> OFF");
+                        digitalWrite(SWITCH_TRANSFORMER_PIN, HIGH);
+                        state = State::OFF;
+                    }
                 }
                 break;
         }
