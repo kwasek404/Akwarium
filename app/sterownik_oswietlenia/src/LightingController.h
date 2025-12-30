@@ -30,15 +30,9 @@ public:
         calculateTargetPower(now, settings);
         manageSwitches();
 
-        // After manageSwitches, the state might be OFF.
-        // If so, don't try to regulate voltage on a circuit that is now powered down.
-        if (state == State::OFF) {
-            // Set PWM to a safe, idle state. Per user request, try setting to 0 (max brightness signal)
-            // to see if it puts the circuit in a more stable state before power-off.
-            analogWrite(VOLTAGE_OUTPUT_PIN, 0);
-            outputVoltage = 0;
-            currentPowerPercent = 0;
-        } else {
+        if (state == State::RAMPING_DOWN) {
+            managePwmRampAndCheck();
+        } else if (state != State::OFF) {
             regulateOutputVoltage();
         }
     }
@@ -64,7 +58,7 @@ public:
     }
 
 private:
-    enum class State { OFF, STARTING, STABILIZING, RUNNING, STOPPING };
+    enum class State { OFF, STARTING, STABILIZING, RUNNING, STOPPING_BALLASTS, RAMPING_DOWN };
     State state = State::OFF;
     
     float targetPowerPercent = 0.0f;
@@ -73,6 +67,10 @@ private:
     int outputVoltage = 0;
     unsigned long lastSwitchTime = 0;
     int ballastsOn = 0;
+
+    // For PWM ramp-down
+    unsigned long rampStartTime = 0;
+    int initialPwmValue = 0;
 
     void calculateTargetPower(time_t now, const Settings& settings) {
         tmElements_t tm;
@@ -139,7 +137,6 @@ private:
                 break;
 
             case State::STARTING:
-                // Wait for transformer to power up before stabilizing voltage
                 if (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
                     DEBUG_PRINTLN("Lighting: State STARTING -> STABILIZING");
                     state = State::STABILIZING;
@@ -148,27 +145,25 @@ private:
 
             case State::STABILIZING:
                 if (!shouldBeOn) {
-                    DEBUG_PRINTLN("Lighting: State STABILIZING -> STOPPING");
-                    state = State::STOPPING;
+                    DEBUG_PRINTLN("Lighting: State STABILIZING -> STOPPING_BALLASTS");
+                    state = State::STOPPING_BALLASTS;
                     lastSwitchTime = currentTime;
                     break;
                 }
-                // Wait for voltage to stabilize before turning on ballasts
                 if (!isSynchronizing()) {
                     DEBUG_PRINTLN("Lighting: State STABILIZING -> RUNNING (Voltage stabilized)");
                     state = State::RUNNING;
-                    lastSwitchTime = currentTime; // Reset timer for ballast switching
+                    lastSwitchTime = currentTime;
                 }
                 break;
 
             case State::RUNNING:
                 if (!shouldBeOn) {
-                    DEBUG_PRINTLN("Lighting: State RUNNING -> STOPPING");
-                    state = State::STOPPING;
+                    DEBUG_PRINTLN("Lighting: State RUNNING -> STOPPING_BALLASTS");
+                    state = State::STOPPING_BALLASTS;
                     lastSwitchTime = currentTime;
                     break;
                 }
-                // Sequentially turn on ballasts
                 if (ballastsOn < 3 && (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS)) {
                     DEBUG_PRINTF("Lighting: Turning on ballast #%d\n", ballastsOn + 1);
                     if (ballastsOn == 0) digitalWrite(SWITCH_BALLAST_1_PIN, LOW);
@@ -179,28 +174,60 @@ private:
                 }
                 break;
 
-            case State::STOPPING:
-                // This refactored logic ensures a delay after the last ballast is turned off.
-                if (ballastsOn > 0) {
-                    // Still ballasts to turn off
-                    if (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
+            case State::STOPPING_BALLASTS:
+                if (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
+                    if (ballastsOn > 0) {
                         DEBUG_PRINTF("Lighting: Turning off ballast #%d\n", ballastsOn);
                         if (ballastsOn == 3) digitalWrite(SWITCH_BALLAST_3_PIN, HIGH);
                         if (ballastsOn == 2) digitalWrite(SWITCH_BALLAST_2_PIN, HIGH);
                         if (ballastsOn == 1) digitalWrite(SWITCH_BALLAST_1_PIN, HIGH);
                         ballastsOn--;
                         lastSwitchTime = currentTime;
-                    }
-                } else {
-                    // All ballasts are off, wait for a delay then turn off the transformer
-                    if (currentTime - lastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
-                        DEBUG_PRINTLN("Lighting: All ballasts off. Turning off transformer. State -> OFF");
-                        digitalWrite(SWITCH_TRANSFORMER_PIN, HIGH);
-                        state = State::OFF;
+                    } else {
+                        DEBUG_PRINTLN("Lighting: All ballasts off. Starting PWM ramp down.");
+                        state = State::RAMPING_DOWN;
+                        rampStartTime = currentTime;
+                        initialPwmValue = ANALOG_WRITE_RESOLUTION - outputVoltage;
                     }
                 }
                 break;
+            
+            case State::RAMPING_DOWN:
+                // This state is handled by managePwmRampAndCheck(), called from update()
+                break;
         }
+    }
+
+    void managePwmRampAndCheck() {
+        const unsigned long RAMP_TIMEOUT = 10000; // 10 seconds
+        const float VOLTAGE_TARGET_PERCENT = 5.0f; // Target a low voltage (discharged)
+
+        unsigned long elapsedTime = millis() - rampStartTime;
+        float feedback = getFeedbackVoltagePercent();
+
+        // Check for success condition (voltage reached target low)
+        if (feedback <= VOLTAGE_TARGET_PERCENT) {
+            // DEBUG_PRINTF is disabled, but left for future reference
+            // DEBUG_PRINTF("Lighting: Ramp down (discharge) success. Feedback at %.1f%%. NOT turning off transformer.\n", feedback);
+            state = State::OFF;
+            analogWrite(VOLTAGE_OUTPUT_PIN, ANALOG_WRITE_RESOLUTION); // Final safe value
+            return;
+        }
+
+        // Check for timeout
+        if (elapsedTime >= RAMP_TIMEOUT) {
+            // DEBUG_PRINTLN("Lighting: Ramp down (discharge) timeout. NOT turning off transformer.");
+            state = State::OFF;
+            analogWrite(VOLTAGE_OUTPUT_PIN, ANALOG_WRITE_RESOLUTION); // Final safe value
+            return;
+        }
+
+        // Ramp in progress (from initialPwmValue towards 255)
+        float progress = (float)elapsedTime / RAMP_TIMEOUT;
+        int rampTarget = ANALOG_WRITE_RESOLUTION;
+        int newPwmValue = initialPwmValue + (rampTarget - initialPwmValue) * progress;
+        newPwmValue = constrain(newPwmValue, 0, ANALOG_WRITE_RESOLUTION);
+        analogWrite(VOLTAGE_OUTPUT_PIN, newPwmValue);
     }
 
     void regulateOutputVoltage() {

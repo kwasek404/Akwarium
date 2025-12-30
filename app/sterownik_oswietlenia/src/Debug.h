@@ -4,7 +4,7 @@
 #include <Arduino.h>
 
 // To disable all debug messages, comment out the line below.
-#define DEBUG_ENABLED
+// #define DEBUG_ENABLED
 
 #ifdef DEBUG_ENABLED
   #define DEBUG_PRINT(x) Serial.print(x)
