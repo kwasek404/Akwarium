@@ -3,7 +3,7 @@
 |---|---|---|---|---|---|---|---|---|---|---|
 
 
-# Akwarium Controller - Professional Schedule
+# Akwarium Controller - "Prestige Plus" Firmware
 
 This firmware implements an advanced, dynamic lighting schedule for professional-grade plant growth and aesthetics.
 
@@ -15,6 +15,7 @@ The system features:
 - **Lumen-Compensated Ballast Switching:** To prevent jarring flashes of light, the controller pre-dims the light, switches a ballast, and then smoothly compensates the power to ensure a seamless transition.
 - **Quadratic Ramps:** "Ease-in" and "ease-out" light changes for more natural and organic dawn/dusk effects.
 - **Fault Detection:** Automatically detects if the 1-10V control circuit fails and safely shuts down the ballasts.
+- **System Power Logic:** The schedule defines the desired **Total System Power** (as a % of all 5 tubes). The controller intelligently calculates the required per-ballast power to achieve this target, with a safety clamp at 100%.
 
 ## Recommended Lamp Configuration
 
@@ -31,22 +32,23 @@ Here is a simulation of how the lighting day will look with settings of **Start:
 -   **Siesta Period:** 13:26 - 17:02 (3 hours 36 minutes)
 
 ### Morning Block (09:00 - 13:26)
-| Phase | Start Time | End Time | Duration | Active Tubes | Power Profile |
-|---|---|---|---|---|---|
-| **Dawn** | 09:00 | 10:06 | ~1h 6m | 1 (G) | 0% -> 50% (ease-in) |
-| **Sunrise** | 10:06 | 11:13 | ~1h 7m | 3 (G+A, G) | 50% -> 100% (linear) |
-| **Morning** | 11:13 | 12:59 | ~1h 46m | 3 (G+A, G) | HOLD 100% |
-| **SiestaRamp**| 12:59 | 13:26 | ~27 min | 3 (G+A, G) | 100% -> 0% (ease-out)|
+| Phase | Start Time | End Time | Duration | Active Tubes | Power (System%) | Power (Per-Tube%) |
+|---|---|---|---|---|---|---|
+| **Dawn** | 09:00 | 10:06 | ~1h 6m | 1 (G) | 0% -> 10% (ease-in) | 0% -> 50% |
+| **Sunrise** | 10:06 | 11:13 | ~1h 7m | 3 (G+A, G) | 10% -> 60% (linear) | 16.7% -> 100% |
+| **Morning** | 11:13 | 12:59 | ~1h 46m | 3 (G+A, G) | HOLD 60% | 100% |
+| **SiestaRamp**| 12:59 | 13:26 | ~27 min | 3 (G+A, G) | 60% -> 0% (ease-out)| 100% -> 0% |
 
 ### Evening Block (17:02 - 21:00)
-| Phase | Start Time | End Time | Duration | Active Tubes | Power Profile |
-|---|---|---|---|---|---|
-| **Awakening** | 17:02 | 17:38 | ~36 min | 4 (2x G+A) | 0% -> 80% (ease-in) |
-| **ZenithRamp**| 17:38 | 18:01 | ~23 min | 5 (All) | 80% -> 100% (linear) |
-| **Zenith** | 18:01 | 20:25 | ~2h 24m | 5 (All) | HOLD 100% |
-| **Dusk** | 20:25 | 21:00 | ~35 min | 2 (G+A) | 100% -> 0% (ease-out)|
+| Phase | Start Time | End Time | Duration | Active Tubes | Power (System%) | Power (Per-Tube%) |
+|---|---|---|---|---|---|---|
+| **Awakening** | 17:02 | 17:38 | ~36 min | 4 (2x G+A) | 0% -> 64% (ease-in) | 0% -> 80% |
+| **ZenithRamp**| 17:38 | 18:01 | ~23 min | 5 (All) | 64% -> 100% (linear) | 80% -> 100% |
+| **Zenith** | 18:01 | 20:25 | ~2h 24m | 5 (All) | HOLD 100% | 100% |
+| **ZenithDrop**| 20:25 | 20:38 | ~13 min | 5 (All) | 100% -> 90% (linear) | 100% -> 90% |
+| **Dusk** | 20:38 | 21:00 | ~22 min | 2 (G+A) | 40% -> 0% (ease-out)| 100% -> 0% |
 
-*Note: All transitions between phases are seamless and lumen-compensated.*
+*Note: The `Dusk` phase starts from a system power of 40% (2 tubes at 100% is 40% of the 5-tube max), not 90% from the previous phase. The transition logic handles this smoothly.*
 
 ## CO2 Dosing Recommendations
 

@@ -52,7 +52,12 @@ void LightingController::update(time_t now, const Settings& settings) {
 float LightingController::getCurrentPowerPercent() const { return currentPowerPercent; }
 const char* LightingController::getCurrentPhaseName() const { return currentPhaseName; }
 uint8_t LightingController::getActiveBallastMask() const { return currentBallastMask; }
-bool LightingController::isSystemInFault() const { return isFault; }
+float LightingController::getGlobalPowerPercent() const {
+    int activeTubes = countTubesInMask(currentBallastMask);
+    if (activeTubes == 0) return 0.0f;
+    // (current power per tube * active tubes) / total possible tubes (5)
+    return (currentPowerPercent * activeTubes) / 5.0f; 
+}
 
 void LightingController::detectFaults() {
     if (scheduleTargetPower > 5.0f && getFeedbackVoltagePercent() < 1.0f) {
@@ -62,10 +67,9 @@ void LightingController::detectFaults() {
         if (millis() - faultCheckTimer > 5000) {
             isFault = true;
         }
-    } else {
-        faultCheckTimer = 0;
-        isFault = false;
     }
+    // No else block here, fault remains true until conditions are met to clear it
+    // This allows the fault to persist even if power drops below 5% temporarily
 }
 
 void LightingController::runScheduler(long nowSeconds, long startSeconds, long stopSeconds) {
@@ -118,10 +122,10 @@ void LightingController::processActiveBlock(long blockStartSeconds, long blockDu
             currentPhaseName = phase.name;
             scheduleTargetBallastMask = phase.ballastMask;
 
-            // Calculate the scheduled TOTAL system power for this moment
-            float scheduleTotalPower;
+            // Calculate the scheduled TOTAL system power for this moment (0-100% of max output of all 5 tubes)
+            float scheduleTotalSystemPower;
             if (phase.type == PhaseType::HOLD) {
-                scheduleTotalPower = phase.startPower;
+                scheduleTotalSystemPower = phase.startPower;
             } else {
                 float phaseDurationPercent = phase.endPercent - phase.startPercent;
                 float progress = (phaseDurationPercent <= 0) ? 1.0f : (blockProgress - phase.startPercent) / phaseDurationPercent;
@@ -129,7 +133,7 @@ void LightingController::processActiveBlock(long blockStartSeconds, long blockDu
 
                 if (phase.type == PhaseType::RAMP_QUAD_IN) { rampProgress = progress * progress; }
                 else if (phase.type == PhaseType::RAMP_QUAD_OUT) { rampProgress = 1.0f - (1.0f - progress) * (1.0f - progress); }
-                scheduleTotalPower = phase.startPower + (phase.endPower - phase.startPower) * rampProgress;
+                scheduleTotalSystemPower = phase.startPower + (phase.endPower - phase.startPower) * rampProgress;
             }
 
             // Translate Total System Power (%) into Per-Ballast Power (%) for the feedback loop
@@ -137,13 +141,14 @@ void LightingController::processActiveBlock(long blockStartSeconds, long blockDu
             if (tubesInThisPhase > 0) {
                 // Total power is a percentage of the max possible output (5 tubes).
                 // E.g., 50% total power means we want the equivalent of 2.5 tubes at 100%.
-                float totalSystemPowerEquivalent = (scheduleTotalPower / 100.0f) * 5.0f;
+                // (scheduleTotalSystemPower / 100) -> proportion of total system power desired
+                // * 5.0f -> scale to "tube equivalents" (e.g., 60% system power = 3 tube equivalents)
+                // / tubesInThisPhase -> proportion of power needed per active tube
+                // * 100.0f -> convert back to percentage
+                float perTubePower = (scheduleTotalSystemPower / tubesInThisPhase) * (5.0f / 100.0f) * 100.0f;
                 
-                // The power per tube needs to be this total power divided by the number of active tubes.
-                float perTubePower = (totalSystemPowerEquivalent / tubesInThisPhase) * 100.0f;
-                
-                // Safety check requested by user.
-                scheduleTargetPower = constrain(perTubePower, 0, 100);
+                // Safety check requested by user: ensure per-tube power doesn't exceed 100%.
+                scheduleTargetPower = constrain(perTubePower, 0.0f, 100.0f);
             } else {
                 scheduleTargetPower = 0;
             }
@@ -195,10 +200,17 @@ void LightingController::manageTransitions() {
             int newTubes = countTubesInMask(nextMask);
             setBallasts(nextMask);
 
-            if (newTubes > 0 && oldTubes > 0) {
-                targetPowerPercent = (powerBeforeTransition * oldTubes) / newTubes;
-            } else {
-                targetPowerPercent = scheduleTargetPower;
+            // Calculate new target power to compensate for the change in active tubes
+            if (newTubes > 0) {
+                float compensatedPower;
+                if (oldTubes > 0) {
+                    compensatedPower = (powerBeforeTransition * oldTubes) / newTubes;
+                } else { // Starting from no tubes, go to the scheduled target
+                    compensatedPower = scheduleTargetPower;
+                }
+                 targetPowerPercent = constrain(compensatedPower, 0.0f, 100.0f);
+            } else { // No tubes active, power should be 0
+                targetPowerPercent = 0;
             }
             
             transitionState = TransitionState::RAMP_UP;

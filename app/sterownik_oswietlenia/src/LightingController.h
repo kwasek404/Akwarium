@@ -14,6 +14,7 @@ public:
 
     // --- Public Getters for UI ---
     float       getCurrentPowerPercent() const;
+    float       getGlobalPowerPercent() const;
     const char* getCurrentPhaseName() const;
     uint8_t     getActiveBallastMask() const;
     bool        isSystemInFault() const;
