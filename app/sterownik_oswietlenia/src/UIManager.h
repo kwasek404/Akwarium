@@ -37,19 +37,23 @@ public:
 
     
 
-            // Refresh screen periodically, but handle blinking separately
+                        // Refresh screen periodically, but handle blinking separately
 
-            if (editMode == EditMode::NONE && millis() - lastUpdate > 500) {
+    
 
-                if (display.getBacklightState()) {
+                        if (editMode == EditMode::NONE && millis() - lastUpdate > 500) {
 
-                    drawCurrentScreen(false);
+    
 
-                }
+                            drawCurrentScreen(false);
 
-                lastUpdate = millis();
+    
 
-            }
+                            lastUpdate = millis();
+
+    
+
+                        }
 
             
 
