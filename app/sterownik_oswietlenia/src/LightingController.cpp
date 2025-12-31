@@ -2,14 +2,9 @@
 #include <Arduino.h>
 
 // --- Constants for transition logic ---
-const unsigned long TRANSITION_RAMP_DURATION = 2000; // 2 seconds for each ramp
 const unsigned long TRANSITION_STABILIZE_TIMEOUT = 3000; // 3 seconds to wait for stabilization
 const float TRANSITION_DIM_POWER = 5.0f; // Dim to 5% power before switching
 const float STABILIZATION_THRESHOLD = 2.0f; // Power is stable if within 2% of target
-
-//
-// --- Public Functions ---
-//
 
 LightingController::LightingController() {
     pinMode(VOLTAGE_OUTPUT_PIN, OUTPUT);
@@ -32,14 +27,12 @@ void LightingController::begin() {
 }
 
 void LightingController::update(time_t now, const Settings& settings) {
-    // Layer 1: Fault Detection (highest priority)
     detectFaults();
+
     if (isFault) {
-        targetPowerPercent = 0;
+        scheduleTargetPower = 0;
         scheduleTargetBallastMask = 0;
-        currentPhaseName = "Fault";
     } else {
-        // Layer 2: Scheduler (determines ultimate targets)
         tmElements_t tm;
         breakTime(now, tm);
         long nowSeconds = tm.Hour * 3600L + tm.Minute * 60L + tm.Second;
@@ -49,13 +42,10 @@ void LightingController::update(time_t now, const Settings& settings) {
             if (nowSeconds < startSeconds) { nowSeconds += 24 * 3600L; }
             stopSeconds += 24 * 3600L;
         }
-        runStateMachine(nowSeconds, startSeconds, stopSeconds);
+        runScheduler(nowSeconds, startSeconds, stopSeconds);
     }
 
-    // Layer 3: Transition Manager (determines immediate targets)
     manageTransitions();
-
-    // Layer 4: Feedback Controller (executes immediate targets)
     regulateOutputVoltage();
 }
 
@@ -64,26 +54,21 @@ const char* LightingController::getCurrentPhaseName() const { return currentPhas
 uint8_t LightingController::getActiveBallastMask() const { return currentBallastMask; }
 bool LightingController::isSystemInFault() const { return isFault; }
 
-//
-// --- Private Methods ---
-//
-
 void LightingController::detectFaults() {
-    // Fault: We are commanding power, but getting no feedback voltage.
-    if (targetPowerPercent > 5.0f && getFeedbackVoltagePercent() < 1.0f) {
+    if (scheduleTargetPower > 5.0f && getFeedbackVoltagePercent() < 1.0f) {
         if (faultCheckTimer == 0) {
             faultCheckTimer = millis();
         }
-        if (millis() - faultCheckTimer > 5000) { // 5 second timeout
+        if (millis() - faultCheckTimer > 5000) {
             isFault = true;
         }
     } else {
-        faultCheckTimer = 0; // Reset timer if conditions are normal
+        faultCheckTimer = 0;
         isFault = false;
     }
 }
 
-void LightingController::runStateMachine(long nowSeconds, long startSeconds, long stopSeconds) {
+void LightingController::runScheduler(long nowSeconds, long startSeconds, long stopSeconds) {
     long totalDuration = stopSeconds - startSeconds;
     if (totalDuration <= 0) { mainState = MainState::OFF; }
 
@@ -102,7 +87,7 @@ void LightingController::runStateMachine(long nowSeconds, long startSeconds, lon
 
     switch (mainState) {
         case MainState::OFF:
-        case MainState::FAULT: // Treat fault like OFF
+        case MainState::FAULT:
             scheduleTargetPower = 0;
             scheduleTargetBallastMask = 0;
             currentPhaseName = (mainState == MainState::FAULT) ? "Fault" : "Off";
@@ -133,18 +118,35 @@ void LightingController::processActiveBlock(long blockStartSeconds, long blockDu
             currentPhaseName = phase.name;
             scheduleTargetBallastMask = phase.ballastMask;
 
-            float phaseDurationPercent = phase.endPercent - phase.startPercent;
-            float progress = (phaseDurationPercent <= 0) ? 1.0f : (blockProgress - phase.startPercent) / phaseDurationPercent;
-            float rampProgress = progress;
-
+            // Calculate the scheduled TOTAL system power for this moment
+            float scheduleTotalPower;
             if (phase.type == PhaseType::HOLD) {
-                rampProgress = 1.0;
-            } else if (phase.type == PhaseType::RAMP_QUAD_IN) {
-                rampProgress = progress * progress;
-            } else if (phase.type == PhaseType::RAMP_QUAD_OUT) {
-                rampProgress = 1.0f - (1.0f - progress) * (1.0f - progress);
+                scheduleTotalPower = phase.startPower;
+            } else {
+                float phaseDurationPercent = phase.endPercent - phase.startPercent;
+                float progress = (phaseDurationPercent <= 0) ? 1.0f : (blockProgress - phase.startPercent) / phaseDurationPercent;
+                float rampProgress = progress;
+
+                if (phase.type == PhaseType::RAMP_QUAD_IN) { rampProgress = progress * progress; }
+                else if (phase.type == PhaseType::RAMP_QUAD_OUT) { rampProgress = 1.0f - (1.0f - progress) * (1.0f - progress); }
+                scheduleTotalPower = phase.startPower + (phase.endPower - phase.startPower) * rampProgress;
             }
-            scheduleTargetPower = phase.startPower + (phase.endPower - phase.startPower) * rampProgress;
+
+            // Translate Total System Power (%) into Per-Ballast Power (%) for the feedback loop
+            int tubesInThisPhase = countTubesInMask(phase.ballastMask);
+            if (tubesInThisPhase > 0) {
+                // Total power is a percentage of the max possible output (5 tubes).
+                // E.g., 50% total power means we want the equivalent of 2.5 tubes at 100%.
+                float totalSystemPowerEquivalent = (scheduleTotalPower / 100.0f) * 5.0f;
+                
+                // The power per tube needs to be this total power divided by the number of active tubes.
+                float perTubePower = (totalSystemPowerEquivalent / tubesInThisPhase) * 100.0f;
+                
+                // Safety check requested by user.
+                scheduleTargetPower = constrain(perTubePower, 0, 100);
+            } else {
+                scheduleTargetPower = 0;
+            }
             return;
         }
     }
@@ -153,9 +155,8 @@ void LightingController::processActiveBlock(long blockStartSeconds, long blockDu
 void LightingController::manageTransitions() {
     if (transitionState == TransitionState::IDLE) {
         if (currentBallastMask != scheduleTargetBallastMask) {
-            transitionState = TransitionState::RAMP_DOWN; // Start the process
+            transitionState = TransitionState::START_TRANSITION;
         } else {
-            // Not transitioning, so the immediate target is the schedule's target.
             targetPowerPercent = scheduleTargetPower;
         }
         return;
@@ -164,37 +165,47 @@ void LightingController::manageTransitions() {
     unsigned long elapsed = millis() - transitionStartTime;
 
     switch(transitionState) {
-        case TransitionState::RAMP_DOWN:
+        case TransitionState::START_TRANSITION:
+            powerBeforeTransition = currentPowerPercent;
             targetPowerPercent = TRANSITION_DIM_POWER;
             transitionStartTime = millis();
             transitionState = TransitionState::WAIT_FOR_DIM;
             break;
 
         case TransitionState::WAIT_FOR_DIM:
-            // Wait for the feedback loop to bring the power down
             if (abs(currentPowerPercent - targetPowerPercent) < STABILIZATION_THRESHOLD || elapsed > TRANSITION_STABILIZE_TIMEOUT) {
                 transitionState = TransitionState::SWITCH_BALLAST;
             }
             break;
 
-        case TransitionState::SWITCH_BALLAST:
-            { // new scope for local variables
-                uint8_t to_add = scheduleTargetBallastMask & ~currentBallastMask;
-                uint8_t to_remove = currentBallastMask & ~scheduleTargetBallastMask;
-                
-                if (to_add != 0) {
-                    uint8_t ballast_to_add = (to_add & BALLAST_1) ? BALLAST_1 : ((to_add & BALLAST_2) ? BALLAST_2 : BALLAST_3);
-                    setBallasts(currentBallastMask | ballast_to_add);
-                } else if (to_remove != 0) {
-                    uint8_t ballast_to_remove = (to_remove & BALLAST_3) ? BALLAST_3 : ((to_remove & BALLAST_2) ? BALLAST_2 : BALLAST_1);
-                    setBallasts(currentBallastMask & ~ballast_to_remove);
-                }
-                
-                transitionState = TransitionState::RAMP_UP;
-                transitionStartTime = millis();
-                lastBallastSwitchTime = millis();
+        case TransitionState::SWITCH_BALLAST: {
+            uint8_t to_add = scheduleTargetBallastMask & ~currentBallastMask;
+            uint8_t to_remove = currentBallastMask & ~scheduleTargetBallastMask;
+            int oldTubes = countTubesInMask(currentBallastMask);
+            uint8_t nextMask = currentBallastMask;
+
+            if (to_add) {
+                uint8_t add = (to_add & BALLAST_1) ? BALLAST_1 : ((to_add & BALLAST_2) ? BALLAST_2 : BALLAST_3);
+                nextMask |= add;
+            } else if (to_remove) {
+                uint8_t remove = (to_remove & BALLAST_3) ? BALLAST_3 : ((to_remove & BALLAST_2) ? BALLAST_2 : BALLAST_1);
+                nextMask &= ~remove;
             }
+            
+            int newTubes = countTubesInMask(nextMask);
+            setBallasts(nextMask);
+
+            if (newTubes > 0 && oldTubes > 0) {
+                targetPowerPercent = (powerBeforeTransition * oldTubes) / newTubes;
+            } else {
+                targetPowerPercent = scheduleTargetPower;
+            }
+            
+            transitionState = TransitionState::RAMP_UP;
+            transitionStartTime = millis();
+            lastBallastSwitchTime = millis();
             break;
+        }
 
         case TransitionState::RAMP_UP:
             targetPowerPercent = scheduleTargetPower;
@@ -203,33 +214,23 @@ void LightingController::manageTransitions() {
             break;
 
         case TransitionState::WAIT_FOR_BRIGHT:
-            // Wait for the feedback loop to bring the power up
             if (abs(currentPowerPercent - targetPowerPercent) < STABILIZATION_THRESHOLD || elapsed > TRANSITION_STABILIZE_TIMEOUT) {
                 transitionState = TransitionState::FINISH_TRANSITION;
             }
             break;
             
         case TransitionState::FINISH_TRANSITION:
-            // One ballast done. Check if more are needed.
             if (currentBallastMask != scheduleTargetBallastMask) {
-                // More to do, wait a second before starting again
-                if(millis() - lastBallastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
-                     transitionState = TransitionState::RAMP_DOWN;
+                if (millis() - lastBallastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
+                    transitionState = TransitionState::START_TRANSITION;
                 }
             } else {
-                // All transitions complete, go back to idle
                 transitionState = TransitionState::IDLE;
             }
             break;
 
-        case TransitionState::IDLE:
-             // Should not happen here, but handle it
-             break;
-        
-        // This state is handled by the initial check in this function
-        case TransitionState::START_TRANSITION:
-             transitionState = TransitionState::IDLE;
-             break;
+        case TransitionState::IDLE: break;
+        case TransitionState::RAMP_DOWN: break; // Should not be used, but keep to avoid warnings
     }
 }
 
@@ -239,6 +240,14 @@ void LightingController::setBallasts(uint8_t mask) {
     digitalWrite(SWITCH_BALLAST_2_PIN, (mask & BALLAST_2) ? LOW : HIGH);
     digitalWrite(SWITCH_BALLAST_3_PIN, (mask & BALLAST_3) ? LOW : HIGH);
     currentBallastMask = mask;
+}
+
+int LightingController::countTubesInMask(uint8_t mask) const {
+    int count = 0;
+    if (mask & BALLAST_1) count += 2;
+    if (mask & BALLAST_2) count += 2;
+    if (mask & BALLAST_3) count += 1;
+    return count;
 }
 
 float LightingController::getFeedbackVoltagePercent() const {

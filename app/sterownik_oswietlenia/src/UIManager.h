@@ -1,7 +1,6 @@
 #ifndef UI_MANAGER_H
 #define UI_MANAGER_H
 
-#include "Debug.h"
 #include "DisplayController.h"
 #include "TimeController.h"
 #include "LightingController.h"
@@ -20,16 +19,19 @@ public:
             bool backlightWasOn = display.getBacklightState();
             display.recordActivity();
 
-            // First button press on a dark screen should only wake it up.
             if (backlightWasOn) {
                 handleInput(action);
             }
         }
 
-        // Refresh screen periodically
-        if (millis() - lastUpdate > 500) {
+        if (millis() - lastUpdate > 250) {
             if (display.getBacklightState()) {
-                drawCurrentScreen(false);
+                // Only call blinking function if not being overridden by active editing
+                if (editMode != EditMode::NONE && millis() > blinkOverrideTimer) {
+                    handleBlinking();
+                } else if (editMode == EditMode::NONE) {
+                    drawCurrentScreen(false);
+                }
             }
             lastUpdate = millis();
         }
@@ -48,11 +50,20 @@ private:
     EditMode editMode = EditMode::NONE;
     int editPos = 0;
     unsigned long lastUpdate;
+    bool blinkState = false;
+    unsigned long blinkOverrideTimer = 0;
+
+    void forceValueDisplay() {
+        blinkState = true; // Set to a known non-blinking state
+        handleBlinking();
+    }
 
     void handleInput(ButtonAction action) {
         if (editMode != EditMode::NONE) {
             handleEditInput(action);
-            drawCurrentScreen(false);
+            // After an edit, override blinking for a short period and force a redraw
+            blinkOverrideTimer = millis() + 500; // Suspend blinking for 500ms
+            forceValueDisplay();
             return;
         }
 
@@ -145,8 +156,43 @@ private:
         drawCurrentScreen(false);
     }
 
+    void handleBlinking() {
+        bool newBlinkState = (millis() / 400) % 2 == 0;
+        if (newBlinkState == blinkState) return;
+        blinkState = newBlinkState;
+
+        time_t t = time.toLocal(time.nowUTC(), settings);
+        char buffer[5];
+
+        if (editMode == EditMode::TIME) {
+            const uint8_t positions[6][2] = {{6, 0}, {9, 0}, {12, 0}, {6, 1}, {11, 1}, {14, 1}};
+            const uint8_t lengths[6] = {2, 2, 2, 4, 2, 2};
+            const int values[6] = {hour(t), minute(t), second(t), year(t), month(t), day(t)};
+            const char* formats[6] = {"%02d", "%02d", "%02d", "%04d", "%02d", "%02d"};
+
+            if (blinkState) {
+                for (uint8_t i = 0; i < lengths[editPos]; i++) display.print(positions[editPos][0] + i, positions[editPos][1], " ");
+            } else {
+                snprintf(buffer, sizeof(buffer), formats[editPos], values[editPos]);
+                display.print(positions[editPos][0], positions[editPos][1], buffer);
+            }
+        } else if (editMode == EditMode::TIMER) {
+            const uint8_t positions[4][2] = {{7, 0}, {10, 0}, {7, 1}, {10, 1}};
+            const int values[4] = {settings.startHour, settings.startMinute, settings.stopHour, settings.stopMinute};
+
+            if (blinkState) {
+                display.print(positions[editPos][0], positions[editPos][1], "  ");
+            } else {
+                snprintf(buffer, sizeof(buffer), "%02d", values[editPos]);
+                display.print(positions[editPos][0], positions[editPos][1], buffer);
+            }
+        }
+    }
+
     void drawCurrentScreen(bool shouldClear) {
-        if (shouldClear) display.clear();
+        if (shouldClear) {
+             display.clear();
+        }
         switch (currentScreen) {
             case 0: drawInfoScreen(); break;
             case 1: drawDateScreen(); break;
@@ -181,10 +227,10 @@ private:
         char buffer[17];
         time_t t = time.toLocal(time.nowUTC(), settings);
         
-        snprintf(buffer, sizeof(buffer), "%02d:%02d:%02d", hour(t), minute(t), second(t));
-        display.print(4, 0, buffer);
-        snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d", year(t), month(t), day(t));
-        display.print(3, 1, buffer);
+        snprintf(buffer, sizeof(buffer), "Time: %02d:%02d:%02d", hour(t), minute(t), second(t));
+        display.print(0, 0, buffer);
+        snprintf(buffer, sizeof(buffer), "Date: %04d-%02d-%02d", year(t), month(t), day(t));
+        display.print(0, 1, buffer);
     }
 
     void drawTimerScreen() {
@@ -199,7 +245,7 @@ private:
         display.print(0, 0, "Timezone:");
         const char* tzString = (settings.timezone == TZ_WARSAW) ? "Warsaw" : "UTC";
         char buffer[17];
-        snprintf(buffer, sizeof(buffer), "> %s", tzString);
+        snprintf(buffer, sizeof(buffer), "> %-13s", tzString);
         display.print(0, 1, buffer);
     }
 };

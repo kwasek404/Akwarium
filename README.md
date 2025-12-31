@@ -1,5 +1,6 @@
 # Testy akwarium
 | Data | pH | GH | KH | CO2 | NO3 | PO4 | K | Ca | Mg | Fe |
+|---|---|---|---|---|---|---|---|---|---|---|
 
 
 # Akwarium Controller - Professional Schedule
@@ -10,39 +11,42 @@ This firmware implements an advanced, dynamic lighting schedule for professional
 
 The controller uses a proportional, multi-phase schedule that scales automatically to the **Start** and **Stop** times you set in the menu. The day is divided into a **Morning Block**, a **Siesta** (mid-day dark period), and an **Evening Block**. The proportions of each phase within these blocks are expertly tuned for plant health and visual appeal.
 
-The system also features **sequential ballast switching** to ensure smooth, gradual changes in light, preventing shock to fish and plants.
+The system features:
+- **Lumen-Compensated Ballast Switching:** To prevent jarring flashes of light, the controller pre-dims the light, switches a ballast, and then smoothly compensates the power to ensure a seamless transition.
+- **Quadratic Ramps:** "Ease-in" and "ease-out" light changes for more natural and organic dawn/dusk effects.
+- **Fault Detection:** Automatically detects if the 1-10V control circuit fails and safely shuts down the ballasts.
 
 ## Recommended Lamp Configuration
 
 For the schedule to work as designed, the lamps should be arranged as follows:
--   **BALLAST 1 (2 tubes):** 1x Sylvania Grolux + 1x Sylvania Aquastar
+-   **BALLAST 1 (2 tubes):** 1x Sylvania Grolux + 1x Sylvania Aquastar (This pair is used for the long, aesthetic dusk)
 -   **BALLAST 2 (2 tubes):** 1x Sylvania Grolux + 1x Sylvania Aquastar
--   **BALLAST 3 (1 tube):** 1x Sylvania Grolux
+-   **BALLAST 3 (1 tube):** 1x Sylvania Grolux (This is the first light on in the morning)
 
 ## Schedule Simulation for 09:00 - 21:00
 
-Here is a simulation of how the lighting day will look with your chosen settings of **Start: 09:00** and **Stop: 21:00**.
+Here is a simulation of how the lighting day will look with settings of **Start: 09:00** and **Stop: 21:00**.
 
 -   **Total Day Duration:** 12 hours
 -   **Siesta Period:** 13:26 - 17:02 (3 hours 36 minutes)
 
 ### Morning Block (09:00 - 13:26)
-| Phase | Start Time | End Time | Duration | Active Ballasts | Power Profile |
+| Phase | Start Time | End Time | Duration | Active Tubes | Power Profile |
 |---|---|---|---|---|---|
-| **Dawn** | 09:00 | 09:53 | ~53 min | Ballast 3 (1 tube) | 0% -> 50% |
-| **Sunrise** | 09:53 | 10:46 | ~53 min | Ballasts 1+3 (3 tubes) | 50% -> 100% |
-| **Morning** | 10:46 | 12:59 | ~2h 13m | Ballasts 1+3 (3 tubes) | HOLD 100% |
-| **SiestaRamp**| 12:59 | 13:26 | ~27 min | Ballasts 1+3 (3 tubes) | 100% -> 0% |
+| **Dawn** | 09:00 | 10:06 | ~1h 6m | 1 (G) | 0% -> 50% (ease-in) |
+| **Sunrise** | 10:06 | 11:13 | ~1h 7m | 3 (G+A, G) | 50% -> 100% (linear) |
+| **Morning** | 11:13 | 12:59 | ~1h 46m | 3 (G+A, G) | HOLD 100% |
+| **SiestaRamp**| 12:59 | 13:26 | ~27 min | 3 (G+A, G) | 100% -> 0% (ease-out)|
 
 ### Evening Block (17:02 - 21:00)
-| Phase | Start Time | End Time | Duration | Active Ballasts | Power Profile |
+| Phase | Start Time | End Time | Duration | Active Tubes | Power Profile |
 |---|---|---|---|---|---|
-| **Awakening** | 17:02 | 17:38 | ~36 min | Ballasts 1+2 (4 tubes)| 0% -> 80% |
-| **ZenithRamp**| 17:38 | 17:58 | ~20 min | All 3 (5 tubes) | 80% -> 100% |
-| **Zenith** | 17:58 | 20:24 | ~2h 26m | All 3 (5 tubes) | HOLD 100% |
-| **Dusk** | 20:24 | 21:00 | ~36 min | Ballast 1 (2 tubes) | 100% -> 0% |
+| **Awakening** | 17:02 | 17:38 | ~36 min | 4 (2x G+A) | 0% -> 80% (ease-in) |
+| **ZenithRamp**| 17:38 | 18:01 | ~23 min | 5 (All) | 80% -> 100% (linear) |
+| **Zenith** | 18:01 | 20:25 | ~2h 24m | 5 (All) | HOLD 100% |
+| **Dusk** | 20:25 | 21:00 | ~35 min | 2 (G+A) | 100% -> 0% (ease-out)|
 
-*Note: All transitions between phases are smooth.*
+*Note: All transitions between phases are seamless and lumen-compensated.*
 
 ## CO2 Dosing Recommendations
 

@@ -32,6 +32,7 @@ private:
     // --- Ballast Transition Sub-State Machine ---
     enum class TransitionState {
         IDLE,
+        START_TRANSITION,
         RAMP_DOWN,
         WAIT_FOR_DIM,
         SWITCH_BALLAST,
