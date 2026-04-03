@@ -381,14 +381,11 @@ public:
         char buffer[17];
         time_t t = time.toLocal(time.nowUTC(), settings);
 
-        // --- Line 1: Time and Power ---
-        float perBallastPwr = lighting.getCurrentPowerPercent();
         float globalPwr = lighting.getGlobalPowerPercent();
-        char p1[4], p2[4];
-        dtostrf(perBallastPwr, 3, 0, p1);
-        dtostrf(globalPwr, 3, 0, p2);
-        // HH:MM P:XXX/YYY% -> 16 chars max
-        snprintf(buffer, sizeof(buffer), "%02d:%02d P:%3s/%3s%%", hour(t), minute(t), p1, p2);
+        char pw[4];
+        dtostrf(globalPwr, 3, 0, pw);
+        snprintf(buffer, sizeof(buffer), "%02d:%02d %3s%% E:%u",
+                 hour(t), minute(t), pw, time.runtimeBadReads);
         display.print(0, 0, buffer);
 
         // --- Line 2: Phase Name and Ballasts ---

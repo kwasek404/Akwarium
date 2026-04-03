@@ -20,21 +20,21 @@ LightingController lightingController;
 UIManager uiManager(displayController, timeController, lightingController, inputProcessor, settings);
 
 void setup() {
-    Serial.begin(9600);
+    pinMode(SWITCH_TRANSFORMER_PIN, OUTPUT);
+    digitalWrite(SWITCH_TRANSFORMER_PIN, HIGH);
 
-    // Initialize hardware and load settings
+    pinMode(RTC_RST_PIN, OUTPUT);
+    digitalWrite(RTC_RST_PIN, LOW);
+
     displayController.begin();
+
+    delay(500);
+
     timeController.begin();
     settings.load();
-    
-    displayController.print(0, 0, "Aquarium Ctrl PRO");
-    displayController.print(0, 1, "Stabilizing...");
-    
-    // Wait for hardware to stabilize before activating power components
-    delay(1000);
-    lightingController.begin(); // Safely turn on the 1-10V transformer
-    
-    delay(500); // Visual pause
+
+    delay(500);
+    lightingController.begin();
     displayController.clear();
 }
 
@@ -45,6 +45,14 @@ void loop() {
     
     // Update all controllers
     lightingController.update(local_now, settings);
+
+    if (lightingController.relaySwitched) {
+        lightingController.relaySwitched = false;
+        timeController.suppressReads(500);
+        delay(100);
+        displayController.reinit();
+    }
+
     displayController.update();
     uiManager.update();
 }

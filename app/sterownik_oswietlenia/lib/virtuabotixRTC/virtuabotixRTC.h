@@ -275,6 +275,7 @@ class virtuabotixRTC  {                                                         
                        uint8_t hours, uint8_t dayofweek,       // DS1302                                 //|
                        uint8_t dayofmonth, uint8_t month,                                                //|
                        int year);                                                                        //|
+    void begin();                                              // Initialize DS1302 (call from setup())  //|
     void updateTime();                                         // This function simply updates the time  //|
                                                                                                          //|
 //++++++++++++++++++++++++++++++++++++++++++++++ Class variables ++++++++++++++++++++++++++++++++++++++++//|

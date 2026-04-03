@@ -39,6 +39,12 @@ public:
         lcd.clear();
     }
 
+    void reinit() {
+        lcd.init();
+        if (isBacklightOn) lcd.backlight();
+        else lcd.noBacklight();
+    }
+
     bool getBacklightState() {
         return isBacklightOn;
     }

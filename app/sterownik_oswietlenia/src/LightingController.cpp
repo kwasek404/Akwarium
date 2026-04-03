@@ -7,6 +7,10 @@ const float TRANSITION_DIM_POWER = 5.0f; // Dim to 5% power before switching
 const float STABILIZATION_THRESHOLD = 2.0f; // Power is stable if within 2% of target
 
 LightingController::LightingController() {
+    currentBallastMask = 0;
+}
+
+void LightingController::begin() {
     pinMode(VOLTAGE_OUTPUT_PIN, OUTPUT);
     pinMode(SWITCH_TRANSFORMER_PIN, OUTPUT);
     pinMode(SWITCH_BALLAST_1_PIN, OUTPUT);
@@ -17,13 +21,7 @@ LightingController::LightingController() {
     digitalWrite(SWITCH_BALLAST_1_PIN, HIGH);
     digitalWrite(SWITCH_BALLAST_2_PIN, HIGH);
     digitalWrite(SWITCH_BALLAST_3_PIN, HIGH);
-    currentBallastMask = 0;
-
     analogWrite(VOLTAGE_OUTPUT_PIN, ANALOG_WRITE_RESOLUTION);
-}
-
-void LightingController::begin() {
-    digitalWrite(SWITCH_TRANSFORMER_PIN, LOW);
 }
 
 void LightingController::update(time_t now, const Settings& settings) {
@@ -45,9 +43,12 @@ void LightingController::update(time_t now, const Settings& settings) {
         runScheduler(nowSeconds, startSeconds, stopSeconds);
     }
 
+    manageTransformer();
     manageTransitions();
     regulateOutputVoltage();
 }
+
+bool LightingController::isTransformerOn() const { return transformerOn; }
 
 float LightingController::getCurrentPowerPercent() const { return currentPowerPercent; }
 const char* LightingController::getCurrentPhaseName() const { return currentPhaseName; }
@@ -268,12 +269,42 @@ float LightingController::getFeedbackVoltagePercent() const {
     return constrain(power, 0.0f, 100.0f);
 }
 
+void LightingController::manageTransformer() {
+    bool lightsNeeded = (scheduleTargetBallastMask != 0) || (scheduleTargetPower > 0);
+
+    if (lightsNeeded) {
+        cooldownActive = false;
+        if (!transformerOn) {
+            digitalWrite(SWITCH_TRANSFORMER_PIN, LOW);
+            transformerOn = true;
+            transformerOnTime = millis();
+            relaySwitched = true;
+        }
+    } else {
+        if (transformerOn && !cooldownActive) {
+            cooldownActive = true;
+            lightsOffTime = millis();
+        }
+        if (cooldownActive && (millis() - lightsOffTime >= FAN_COOLDOWN_MS)) {
+            digitalWrite(SWITCH_TRANSFORMER_PIN, HIGH);
+            transformerOn = false;
+            cooldownActive = false;
+            relaySwitched = true;
+        }
+    }
+}
+
 void LightingController::regulateOutputVoltage() {
     currentPowerPercent = getFeedbackVoltagePercent();
-    if (mainState == MainState::OFF || mainState == MainState::FAULT) {
+    if (mainState == MainState::OFF || mainState == MainState::FAULT || !transformerOn) {
         targetPowerPercent = 0;
     }
-    
+
+    if (transformerOn && (millis() - transformerOnTime < TRANSFORMER_WARMUP_MS)) {
+        targetPowerPercent = 0;
+        return;
+    }
+
     float error = targetPowerPercent - currentPowerPercent;
     outputVoltage += (int)(error * VOLTAGE_KP);
     outputVoltage = constrain(outputVoltage, 0, ANALOG_WRITE_RESOLUTION);

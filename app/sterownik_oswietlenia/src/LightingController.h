@@ -18,6 +18,9 @@ public:
     const char* getCurrentPhaseName() const;
     uint8_t     getActiveBallastMask() const;
     bool        isSystemInFault() const;
+    bool        isTransformerOn() const;
+
+    bool        relaySwitched = false;
 
 private:
     // --- High-Level State Machine ---
@@ -63,11 +66,18 @@ private:
     // --- Feedback Loop Controller State ---
     int         outputVoltage = 0;
 
+    // --- 12V Transformer / Fan Control ---
+    bool          transformerOn = false;
+    unsigned long transformerOnTime = 0;
+    unsigned long lightsOffTime = 0;
+    bool          cooldownActive = false;
+
     // --- Private Methods ---
     void detectFaults();
     void runScheduler(long nowSeconds, long startSeconds, long stopSeconds);
     void processActiveBlock(long blockStartSeconds, long blockDuration, const SchedulePhase* phases, int phaseCount, long nowSeconds);
     void manageTransitions();
+    void manageTransformer();
     void setBallasts(uint8_t mask);
     int  countTubesInMask(uint8_t mask) const;
     

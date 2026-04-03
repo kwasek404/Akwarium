@@ -11,39 +11,56 @@ class TimeController {
 public:
     TimeController(uint8_t clk, uint8_t dat, uint8_t rst) : rtc(clk, dat, rst) {}
 
-    void begin() {
-        time_t initialTime = getRawRtcTime();
-        ::setTime(initialTime);
+    uint8_t bootValidCount = 0;
+    uint8_t bootQuorumSize = 0;
+    bool bootQuorumReached = false;
+    uint16_t runtimeBadReads = 0;
 
-        // Initialize the backup time variables
+    void suppressReads(unsigned long durationMs) {
+        suppressUntil = millis() + durationMs;
+    }
+
+    void begin() {
+        rtc.begin();
+
+        const uint8_t NUM_READS = 7;
+        time_t readings[NUM_READS];
+        for (uint8_t i = 0; i < NUM_READS; i++) {
+            readings[i] = getRawRtcTime();
+            if (i < NUM_READS - 1) delay(30);
+        }
+
+        uint8_t validCount = 0;
+        for (uint8_t i = 0; i < NUM_READS; i++) {
+            if (isTimeValid(readings[i])) validCount++;
+        }
+        bootValidCount = validCount;
+
+        time_t initialTime = getQuorumTime(readings, NUM_READS);
+
+        ::setTime(initialTime);
         lastKnownGoodTime = initialTime;
         lastReadMillis = millis();
     }
 
     time_t nowUTC() {
+        if (suppressUntil != 0 && millis() < suppressUntil) {
+            unsigned long elapsed = millis() - lastReadMillis;
+            return lastKnownGoodTime + (elapsed / 1000);
+        }
+        suppressUntil = 0;
+
         time_t rawTime = getRawRtcTime();
 
-        // Sanity check: if time goes backwards, RTC has been reset or corrupted.
-        if (rawTime < lastKnownGoodTime) {
-            // Calculate elapsed time using the stable internal clock
-            unsigned long elapsed = millis() - lastReadMillis;
-            time_t correctedTime = lastKnownGoodTime + (elapsed / 1000);
-
-            // Heal the RTC by writing the corrected time back to it
-            rtc.setDS1302Time(::second(correctedTime), ::minute(correctedTime), ::hour(correctedTime), 0, ::day(correctedTime), ::month(correctedTime), ::year(correctedTime));
-            
-            // Update backups with the newly corrected time
-            lastKnownGoodTime = correctedTime;
+        if (isTimeValid(rawTime)) {
+            lastKnownGoodTime = rawTime;
             lastReadMillis = millis();
-
-            // Return the corrected time for this loop
-            return correctedTime;
+            return rawTime;
         }
 
-        // If time is valid, update the backups and return the time
-        lastKnownGoodTime = rawTime;
-        lastReadMillis = millis();
-        return rawTime;
+        runtimeBadReads++;
+        unsigned long elapsed = millis() - lastReadMillis;
+        return lastKnownGoodTime + (elapsed / 1000);
     }
 
     time_t toLocal(time_t utc, const Settings& settings) {
@@ -62,21 +79,19 @@ public:
         tm.Minute = minute;
         tm.Second = second;
         time_t localTime = makeTime(tm);
-        
+
         time_t utcTime = (settings.timezone == TZ_WARSAW) ? warsawTZ.toUTC(localTime) : localTime;
 
         rtc.setDS1302Time(::second(utcTime), ::minute(utcTime), ::hour(utcTime), 0, ::day(utcTime), ::month(utcTime), ::year(utcTime));
-        
-        // Also update our backup time immediately
+
         lastKnownGoodTime = utcTime;
         lastReadMillis = millis();
     }
 
     void adjustTime(long adjustment, const Settings& settings) {
-        time_t newTime = nowUTC() + adjustment; // nowUTC() will give a corrected time
+        time_t newTime = nowUTC() + adjustment;
         rtc.setDS1302Time(::second(newTime), ::minute(newTime), ::hour(newTime), 0, ::day(newTime), ::month(newTime), ::year(newTime));
 
-        // Also update our backup time immediately
         lastKnownGoodTime = newTime;
         lastReadMillis = millis();
     }
@@ -85,8 +100,8 @@ private:
     virtuabotixRTC rtc;
     time_t lastKnownGoodTime = 0;
     unsigned long lastReadMillis = 0;
+    unsigned long suppressUntil = 0;
 
-    // Helper to get raw time from RTC without any logic
     time_t getRawRtcTime() {
         rtc.updateTime();
         tmElements_t tm;
@@ -97,6 +112,54 @@ private:
         tm.Minute = rtc.minutes;
         tm.Second = rtc.seconds;
         return makeTime(tm);
+    }
+
+    bool isTimeValid(time_t t) {
+        if (t <= 0) return false;
+        int y = ::year(t);
+        int m = ::month(t);
+        int d = ::day(t);
+        int h = ::hour(t);
+        int mi = ::minute(t);
+        int s = ::second(t);
+        if (m < 1 || m > 12) return false;
+        if (d < 1 || d > 31) return false;
+        if (h > 23) return false;
+        if (mi > 59) return false;
+        if (s > 59) return false;
+        if (y < 2000 || y > 2099) return false;
+        return true;
+    }
+
+    time_t getQuorumTime(time_t* readings, uint8_t count) {
+        uint8_t bestCount = 0;
+        time_t bestTime = readings[0];
+
+        for (uint8_t i = 0; i < count; i++) {
+            if (!isTimeValid(readings[i])) continue;
+            uint8_t matches = 0;
+            for (uint8_t j = 0; j < count; j++) {
+                if (!isTimeValid(readings[j])) continue;
+                long diff = (long)(readings[j] - readings[i]);
+                if (diff < 0) diff = -diff;
+                if (diff <= 2) matches++;
+            }
+            if (matches > bestCount) {
+                bestCount = matches;
+                bestTime = readings[i];
+            }
+        }
+
+        bootQuorumSize = bestCount;
+        bootQuorumReached = (bestCount >= 3);
+
+        if (bestCount >= 3) return bestTime;
+
+        for (uint8_t i = 0; i < count; i++) {
+            if (isTimeValid(readings[i])) return readings[i];
+        }
+
+        return readings[count - 1];
     }
 };
 

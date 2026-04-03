@@ -293,8 +293,31 @@ virtuabotixRTC::virtuabotixRTC(uint8_t inSCLK, uint8_t inIO, uint8_t inC_E)   { 
   SCLK = inSCLK;                                                                                         //|    |
   IO = inIO;                                                                                             //|    |
   C_E = inC_E;                                                                                           //|    |
-  DS1302_write (DS1302_ENABLE, 0);                         // Sets the Clock Enable to ON.               //|    |
-  DS1302_write (DS1302_TRICKLE, 0x00);                     // Disable Trickle Charger.                   //|    |
+}                      //|    |
+//=======================================================================================================//|    |
+//                                                                                                       //|    |
+//                                        virtuabotixRTC begin Function                                  //|    |
+//                                                                                                       //|    |
+//+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++//|    |
+void virtuabotixRTC::begin()  {                                                                          //|    |
+  digitalWrite( C_E, LOW );                                                                              //|    |
+  pinMode( C_E, OUTPUT );                                                                                //|    |
+  digitalWrite( SCLK, LOW );                                                                             //|    |
+  pinMode( SCLK, OUTPUT );                                                                               //|    |
+  pinMode( IO, OUTPUT );                                                                                 //|    |
+  digitalWrite( IO, LOW );                                                                               //|    |
+  delay( 10 );                                                                                           //|    |
+                                                                                                         //|    |
+  uint8_t probe = DS1302_read(0x81);                       // Probe read first (safe, no writes)         //|    |
+  (void)probe;                                                                                           //|    |
+                                                                                                         //|    |
+  uint8_t sec_reg = DS1302_read(0x81);                     // Read seconds register                      //|    |
+  if (sec_reg & 0x80) {                                    // CH bit set = clock halted                  //|    |
+    DS1302_write (DS1302_ENABLE, 0);                       // Disable WP only when needed                //|    |
+    DS1302_write (DS1302_TRICKLE, 0x00);                   // Disable Trickle Charger                    //|    |
+    DS1302_write(0x80, sec_reg & 0x7F);                    // Clear CH bit to restart oscillator         //|    |
+    DS1302_write (DS1302_ENABLE, 0x80);                    // Re-enable WP immediately                   //|    |
+  }                                                                                                      //|    |
 }                      //|    |
 //=======================================================================================================//|    |
 //                                                                                                       //|    |
@@ -631,13 +654,13 @@ void virtuabotixRTC::setDS1302Time(uint8_t seconds, uint8_t minutes, uint8_t hou
                                    uint8_t dayofmonth, uint8_t month, int year)  {                       //|    |
                                                                                                          //|    |
 //+++++++++++++++++++++++++++++++++++++++ Variable Declarations +++++++++++++++++++++++++++++++++++++++++//|    |
-  seconds    = seconds;                                                                                  //|    |
-  minutes    = minutes;                                                                                  //|    |
-  hours      = hours;                                                                                    //|    |
-  dayofweek  = dayofweek;                                                                                //|    |
-  dayofmonth = dayofmonth;                                                                               //|    |
-  month      = month;                                                                                    //|    |
-  year       = year;                                                                                     //|    |
+  this->seconds    = seconds;                                                                            //|    |
+  this->minutes    = minutes;                                                                            //|    |
+  this->hours      = hours;                                                                              //|    |
+  this->dayofweek  = dayofweek;                                                                          //|    |
+  this->dayofmonth = dayofmonth;                                                                         //|    |
+  this->month      = month;                                                                              //|    |
+  this->year       = year;                                                                                     //|    |
                                                                                                          //|    |
 //++++++++++++++++++++ This will fill the output array of the rtc object with ZEROs +++++++++++++++++++++//|    |
   memset ((char *) &rtc, 0, sizeof(rtc));                                                                //|    |
@@ -661,7 +684,9 @@ void virtuabotixRTC::setDS1302Time(uint8_t seconds, uint8_t minutes, uint8_t hou
   rtc.WP              = 0;                                                                               //|    |
                                                                                                          //|    |
 //+++++++++++++++++++++++++++++++ Write all clock data at once (burst mode) +++++++++++++++++++++++++++++//|    |
+  DS1302_write (DS1302_ENABLE, 0);                         // Disable WP before burst write              //|    |
   DS1302_clock_burst_write( (uint8_t *) &rtc);                                                           //|    |
+  DS1302_write (DS1302_ENABLE, 0x80);                      // Re-enable WP after burst write             //|    |
 }               //|    |
                                                                                                          //|    |
 //=======================================================================================================//|    |
