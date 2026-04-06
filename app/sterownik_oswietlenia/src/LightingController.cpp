@@ -68,9 +68,9 @@ void LightingController::detectFaults() {
         if (millis() - faultCheckTimer > 5000) {
             isFault = true;
         }
+    } else if (!isFault) {
+        faultCheckTimer = 0;
     }
-    // No else block here, fault remains true until conditions are met to clear it
-    // This allows the fault to persist even if power drops below 5% temporarily
 }
 
 void LightingController::runScheduler(long nowSeconds, long startSeconds, long stopSeconds) {
@@ -146,7 +146,7 @@ void LightingController::processActiveBlock(long blockStartSeconds, long blockDu
                 // * 5.0f -> scale to "tube equivalents" (e.g., 60% system power = 3 tube equivalents)
                 // / tubesInThisPhase -> proportion of power needed per active tube
                 // * 100.0f -> convert back to percentage
-                float perTubePower = (scheduleTotalSystemPower / tubesInThisPhase) * (5.0f / 100.0f) * 100.0f;
+                float perTubePower = (scheduleTotalSystemPower * 5.0f) / tubesInThisPhase;
                 
                 // Safety check requested by user: ensure per-tube power doesn't exceed 100%.
                 scheduleTargetPower = constrain(perTubePower, 0.0f, 100.0f);
@@ -243,7 +243,6 @@ void LightingController::manageTransitions() {
             break;
 
         case TransitionState::IDLE: break;
-        case TransitionState::RAMP_DOWN: break; // Should not be used, but keep to avoid warnings
     }
 }
 

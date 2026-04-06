@@ -48,7 +48,7 @@ const SchedulePhase PRO_SCHEDULE_EVENING[PRO_SCHEDULE_EVENING_PHASES_COUNT] = {
     { "ZenithRmp", 0.15,  0.25,   BALLAST_1|BALLAST_2|BALLAST_3, PhaseType::RAMP_LINEAR,    64, 100}, // Ramp to 5 tubes @ 100% = 100% system power
     { "Zenith",    0.25,  0.80,   BALLAST_1|BALLAST_2|BALLAST_3, PhaseType::HOLD,         100, 100}, // Hold 5 tubes @ 100%
     { "ZenithD",   0.80,  0.85,   BALLAST_1|BALLAST_2|BALLAST_3, PhaseType::RAMP_LINEAR,   100,  90}, // Drop power before switching off ballasts
-    { "Dusk",      0.85,  1.00,   BALLAST_1,                     PhaseType::RAMP_QUAD_OUT,  90,   0}  // Ramp down with 2 tubes
+    { "Dusk",      0.85,  1.00,   BALLAST_1,                     PhaseType::RAMP_QUAD_OUT,  40,   0}  // 2 tubes @ 100% = 40% system, ramp down
 };
 
 #endif // SCHEDULE_H

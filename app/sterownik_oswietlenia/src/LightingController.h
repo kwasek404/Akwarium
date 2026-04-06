@@ -37,7 +37,6 @@ private:
     enum class TransitionState {
         IDLE,
         START_TRANSITION,
-        RAMP_DOWN,
         WAIT_FOR_DIM,
         SWITCH_BALLAST,
         RAMP_UP,
