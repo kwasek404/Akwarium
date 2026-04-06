@@ -60,18 +60,27 @@ To maximize plant growth and health with this new lighting schedule, CO2 dosing 
 
 ---
 
-## DS1302 RTC Power Fix
+## DS1302 RTC Reliability
 
-The DS1302 RTC module loses time on cold boot when powered from the transformer PSU. The transients on the 5V rail during power-on/off corrupt the chip's internal registers. The fix is to power the RTC from the Arduino's 3.3V regulator with a Schottky diode and bulk capacitor.
+The DS1302 RTC module loses time on cold boot when powered from the transformer PSU. The transients on the 5V rail during power-on/off cause a full Power-On Reset (POR) of the DS1302 chip. Multiple hardware and software defense layers have been implemented.
 
-### Required Parts
+### Current Hardware Modifications
 
-- **1N5819** Schottky diode (or equivalent: SS14, SB140, BAT42 - any Schottky rated >= 20V, >= 0.5A)
-- **220uF** electrolytic capacitor (any voltage rating >= 6.3V, physically 10-16V are common)
+**Power supply** (done):
+- RTC Vcc rewired from 5V to Arduino's 3.3V regulator (filters transformer transients)
+- 220uF electrolytic capacitor on Vcc/GND at the module
 
-### Wiring Diagram
+**Signal line filtering** (done):
+- 220 ohm series resistors on all three signal lines (CE, SCLK, I/O)
+- 10k pull-down resistors on CE, SCLK, and I/O (forces LOW when ATmega pins float)
+- 100nF bypass capacitor on CE/GND (on the module)
 
-Disconnect the RTC module Vcc wire from the 5V rail and reconnect to Arduino's 3.3V pin:
+**Pending** (parts on order):
+- 1N5819 Schottky diode in series on Vcc to block reverse current during power-off
+
+### Pending Modification - Schottky Diode
+
+When the 1N5819 arrives, solder it in series on the Vcc line:
 
 ```
                         1N5819
@@ -85,16 +94,18 @@ Arduino 3.3V ------|>|------+------ Vcc DS1302 module
 Arduino GND ----------------+------ GND DS1302 module
 ```
 
-- Cut the existing Vcc wire going from 5V to the RTC module
-- Solder the 1N5819 diode in series: anode to 3.3V, cathode (stripe) toward RTC Vcc
-- Solder the 220uF capacitor between the diode output and GND (long leg + to diode output)
-- GND remains shared
+The Schottky diode blocks reverse current when power drops, preventing the capacitor and RTC from discharging back through the falling 3.3V rail. DS1302 operates from 2.0V minimum - 3.3V minus 0.3V diode drop = 3.0V, well within spec.
 
-### How It Works
+### Software Defenses
 
-1. **3.3V regulator** filters transformer PSU transients (additional regulation stage)
-2. **Schottky diode** blocks reverse current when power drops - prevents the capacitor and RTC from discharging back through the falling 3.3V rail
-3. **220uF capacitor** holds voltage steady during the switchover to battery backup
-4. DS1302 operates from 2.0V minimum - 3.3V minus 0.3V diode drop = 3.0V, well within spec
+1. **Boot quorum**: 7 reads with 30ms spacing, requires 3+ to agree within +-2 seconds
+2. **Runtime BCD validation**: every read is validated (year/month/day/hour/min/sec ranges), bad reads fall back to lastKnownGoodTime + millis() elapsed
+3. **No automatic writes**: RTC is never written to in the main loop, only during explicit user time-set
+4. **EMI suppression**: relay switching events trigger 500ms RTC read suppression and LCD reinitialization
+5. **Write Protect**: WP bit kept enabled, only cleared during user time-set operations
+
+### Fallback Plan - I2C RTC
+
+If DS1302 reliability remains insufficient after all mitigations, the I2C bus (A4/A5) is already in use for the LCD (address 0x27). A DS3231 module can be added to the same bus without rewiring - only firmware changes needed. The DS3231 has a built-in temperature-compensated oscillator (no external crystal), making it inherently more resistant to EMI.
 
 ---

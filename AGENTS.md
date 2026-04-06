@@ -75,10 +75,11 @@ Ballasts are addressed via bitmask: `BALLAST_1 = 0x01` (2 tubes), `BALLAST_2 = 0
 - **Transformer pin** (`SWITCH_TRANSFORMER_PIN`, pin 2) powers the 1-10V control circuit. It is activated in `begin()` after a 1-second hardware stabilization delay in `setup()`. It must be on before any ballast switching makes sense.
 - **Voltage feedback** uses a voltage divider on `A2`, reading 0-10V mapped to 0-5V ADC range. The `getFeedbackVoltagePercent()` formula: `(ADC / 1023 * 5.0 * 2.0 - 1.0) * (100.0 / 9.0)` maps the 1-10V range to 0-100%.
 - **EEPROM addresses 0-4** are used for settings. Adding new persistent settings must use addresses >= 5.
-- **DS1302 CE pull-down**: A 10k resistor + 100nF cap soldered on CE/GND of the RTC module. Prevents spurious writes from floating GPIO during power transitions.
-- **DS1302 power supply**: Fed from Arduino's 3.3V regulator (not 5V) with a 220uF electrolytic on Vcc/GND at the module. Planned addition: 1N5819 Schottky diode in series on Vcc to block reverse current during power-off, ensuring clean battery switchover. The 3.3V regulator filters transformer PSU transients that previously caused DS1302 resets on cold boot.
+- **DS1302 signal line filtering**: All three signal lines (CE, SCLK, I/O) have 220 ohm series resistors to suppress EMI-induced transients from transformer/starter cables. CE has 10k pull-down + 100nF cap on the module. SCLK and I/O have 10k pull-downs to force LOW when ATmega pins float (reset, boot, brownout).
+- **DS1302 power supply**: Fed from Arduino's 3.3V regulator (not 5V) with a 220uF electrolytic on Vcc/GND at the module. Pending: 1N5819 Schottky diode in series on Vcc to block reverse current during power-off, ensuring clean battery switchover (parts on order). The 3.3V regulator filters transformer PSU transients that previously caused DS1302 resets on cold boot.
 - **DS1302 Write Protect**: WP bit (register 0x8E) is kept enabled (WP=1) as default state. Only cleared momentarily during explicit user time-set operations. WP is battery-backed, protecting clock registers from spurious writes during power transients.
 - **12V relay EMI**: The transformer relay (pin 2) generates inductive kickback on switching that can corrupt DS1302 reads and LCD HD44780 controller. Software mitigation: RTC reads are suppressed for 500ms after relay events, LCD is reinitialized after 100ms settle time.
+- **Potential I2C RTC upgrade**: If DS1302 reliability remains insufficient after all hardware mitigations, the I2C bus (A4/A5) is already available (shared with LCD at 0x27). A DS3231 or PCF8563 module can be added without rewiring - only firmware changes needed.
 
 ## Schedule Modification
 
@@ -109,7 +110,7 @@ Managed via `platformio.ini`:
 
 The DS1302 RTC is vulnerable to power transients from the transformer PSU. Multiple defense layers are implemented:
 
-1. **Hardware**: 3.3V supply (filtered by regulator), 220uF cap, CE pull-down with 10k + 100nF. Planned: Schottky diode on Vcc.
+1. **Hardware**: 3.3V supply (filtered by regulator), 220uF cap, 220R series resistors on all signal lines, 10k pull-downs on CE/SCLK/IO, CE 100nF bypass cap. Pending: 1N5819 Schottky diode on Vcc (parts on order).
 2. **Boot quorum**: `begin()` performs 7 reads with 30ms spacing, requires 3+ to agree within +-2 seconds. Rejects garbled boot reads.
 3. **Runtime BCD validation**: `nowUTC()` validates every read (year 2000-2099, month 1-12, day 1-31, hour 0-23, min/sec 0-59). Bad reads fall back to lastKnownGoodTime + millis() elapsed.
 4. **No automatic writes**: RTC is never written to in the main loop. Only explicit user time-set operations write to DS1302. This prevents garbled reads from being written back as "corrections".
