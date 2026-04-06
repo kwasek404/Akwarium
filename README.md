@@ -16,13 +16,15 @@ The system features:
 - **Quadratic Ramps:** "Ease-in" and "ease-out" light changes for more natural and organic dawn/dusk effects.
 - **Fault Detection:** Automatically detects if the 1-10V control circuit fails and safely shuts down the ballasts.
 - **System Power Logic:** The schedule defines the desired **Total System Power** (as a % of all 5 tubes). The controller intelligently calculates the required per-ballast power to achieve this target, with a safety clamp at 100%.
+- **Dynamic Ballast Selection:** The schedule defines only power curves - ballast masks are computed at runtime using the minimum number of tubes needed. This maximizes total tube-hours (tube lifetime).
+- **Daily B1/B2 Rotation:** The "primary pair" (first ballast on in the evening, last off at dusk) alternates daily between B1 and B2, illuminating different aquarium zones on alternating days.
 
 ## Recommended Lamp Configuration
 
 For the schedule to work as designed, the lamps should be arranged as follows:
--   **BALLAST 1 (2 tubes):** 1x Sylvania Grolux + 1x Sylvania Aquastar (This pair is used for the long, aesthetic dusk)
--   **BALLAST 2 (2 tubes):** 1x Sylvania Grolux + 1x Sylvania Aquastar
--   **BALLAST 3 (1 tube):** 1x Sylvania Grolux (This is the first light on in the morning)
+-   **BALLAST 1 (2 tubes):** 1x Sylvania Grolux + 1x Sylvania Aquastar (alternates daily with B2 as primary evening pair)
+-   **BALLAST 2 (2 tubes):** 1x Sylvania Grolux + 1x Sylvania Aquastar (alternates daily with B1 as primary evening pair)
+-   **BALLAST 3 (1 tube):** 1x Sylvania Grolux (always the first light on in the morning dawn)
 
 ## Schedule Simulation for 09:00 - 21:00
 
@@ -34,21 +36,21 @@ Here is a simulation of how the lighting day will look with settings of **Start:
 ### Morning Block (09:00 - 13:26)
 | Phase | Start Time | End Time | Duration | Active Tubes | Power (System%) | Power (Per-Tube%) |
 |---|---|---|---|---|---|---|
-| **Dawn** | 09:00 | 10:06 | ~1h 6m | 1 (G) | 0% -> 10% (ease-in) | 0% -> 50% |
-| **Sunrise** | 10:06 | 11:13 | ~1h 7m | 3 (G+A, G) | 10% -> 60% (linear) | 16.7% -> 100% |
-| **Morning** | 11:13 | 12:59 | ~1h 46m | 3 (G+A, G) | HOLD 60% | 100% |
-| **SiestaRamp**| 12:59 | 13:26 | ~27 min | 3 (G+A, G) | 60% -> 0% (ease-out)| 100% -> 0% |
+| **Dawn** | 09:00 | 10:06 | ~1h 6m | 1 (B3) | 0% -> 10% (ease-in) | 0% -> 50% |
+| **Sunrise** | 10:06 | 11:13 | ~1h 7m | 3 (B3+primary) | 10% -> 60% (linear) | 16.7% -> 100% |
+| **Morning** | 11:13 | 12:59 | ~1h 46m | 3 (B3+primary) | HOLD 60% | 100% |
+| **SiestaR** | 12:59 | 13:26 | ~27 min | 3 (B3+primary) | 60% -> 0% (ease-out)| 100% -> 0% |
 
 ### Evening Block (17:02 - 21:00)
 | Phase | Start Time | End Time | Duration | Active Tubes | Power (System%) | Power (Per-Tube%) |
 |---|---|---|---|---|---|---|
-| **Awakening** | 17:02 | 17:38 | ~36 min | 4 (2x G+A) | 0% -> 64% (ease-in) | 0% -> 80% |
-| **ZenithRamp**| 17:38 | 18:01 | ~23 min | 5 (All) | 64% -> 100% (linear) | 80% -> 100% |
+| **Awakening** | 17:02 | 17:38 | ~36 min | 2 (primary) | 0% -> 40% (ease-in) | 0% -> 100% |
+| **ZenithRmp** | 17:38 | 18:01 | ~23 min | 5 (All) | 40% -> 100% (linear) | 40% -> 100% |
 | **Zenith** | 18:01 | 20:25 | ~2h 24m | 5 (All) | HOLD 100% | 100% |
-| **ZenithDrop**| 20:25 | 20:38 | ~13 min | 5 (All) | 100% -> 90% (linear) | 100% -> 90% |
-| **Dusk** | 20:38 | 21:00 | ~22 min | 2 (G+A) | 40% -> 0% (ease-out)| 100% -> 0% |
+| **ZenithD** | 20:25 | 20:38 | ~13 min | 5 (All) | 100% -> 40% (linear) | 100% -> 40% |
+| **Dusk** | 20:38 | 21:00 | ~22 min | 2 (primary) | 40% -> 0% (ease-out)| 100% -> 0% |
 
-*Note: The `Dusk` phase starts from a system power of 40% (2 tubes at 100% is 40% of the 5-tube max), not 90% from the previous phase. The transition logic handles this smoothly.*
+*Note: "primary" alternates daily between B1 and B2 based on `(day + month*31) % 2`. The evening starts and ends with the warm Grolux+Aquastar pair rather than B3 solo, giving a warmer dusk aesthetic.*
 
 ## CO2 Dosing Recommendations
 

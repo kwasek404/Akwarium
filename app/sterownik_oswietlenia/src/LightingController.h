@@ -12,7 +12,6 @@ public:
     void begin();
     void update(time_t now, const Settings& settings);
 
-    // --- Public Getters for UI ---
     float       getCurrentPowerPercent() const;
     float       getGlobalPowerPercent() const;
     const char* getCurrentPhaseName() const;
@@ -23,7 +22,6 @@ public:
     bool        relaySwitched = false;
 
 private:
-    // --- High-Level State Machine ---
     enum class MainState {
         OFF,
         MORNING_BLOCK,
@@ -33,7 +31,6 @@ private:
     };
     MainState mainState = MainState::OFF;
 
-    // --- Ballast Transition Sub-State Machine ---
     enum class TransitionState {
         IDLE,
         START_TRANSITION,
@@ -45,41 +42,43 @@ private:
     };
     TransitionState transitionState = TransitionState::IDLE;
 
-    // --- Core State & Target Variables ---
     const char* currentPhaseName = "Off";
-    float       currentPowerPercent = 0.0f;     // Actual power from feedback
+    float       currentPowerPercent = 0.0f;
     uint8_t     currentBallastMask = 0;
-    float       targetPowerPercent = 0.0f;      // The immediate power target for the feedback loop
-    uint8_t     scheduleTargetBallastMask = 0;  // The ultimate mask target from the schedule
-    float       scheduleTargetPower = 0.0f;     // The ultimate power target from the schedule
-    
-    // --- State Timers & Variables ---
+    float       targetPowerPercent = 0.0f;
+    uint8_t     scheduleTargetBallastMask = 0;
+    float       scheduleTargetPower = 0.0f;
+
     unsigned long lastBallastSwitchTime = 0;
     unsigned long transitionStartTime = 0;
     float         powerBeforeTransition = 0.0f;
-    
-    // --- Fault Detection ---
+
     bool          isFault = false;
     unsigned long faultCheckTimer = 0;
 
-    // --- Feedback Loop Controller State ---
     int         outputVoltage = 0;
 
-    // --- 12V Transformer / Fan Control ---
     bool          transformerOn = false;
     unsigned long transformerOnTime = 0;
     unsigned long lightsOffTime = 0;
     bool          cooldownActive = false;
 
-    // --- Private Methods ---
+    uint8_t     primaryPair = BALLAST_1;
+    uint8_t     secondaryPair = BALLAST_2;
+    int         lastRotationDay = -1;
+
     void detectFaults();
     void runScheduler(long nowSeconds, long startSeconds, long stopSeconds);
-    void processActiveBlock(long blockStartSeconds, long blockDuration, const SchedulePhase* phases, int phaseCount, long nowSeconds);
+    void processActiveBlock(long blockStartSeconds, long blockDuration,
+                            const SchedulePhase* phases, int phaseCount,
+                            long nowSeconds, bool isMorning);
+    void updateDailyRotation(time_t now);
+    uint8_t selectOptimalMask(float systemPower, bool isMorning) const;
     void manageTransitions();
     void manageTransformer();
     void setBallasts(uint8_t mask);
     int  countTubesInMask(uint8_t mask) const;
-    
+
     float getFeedbackVoltagePercent() const;
     void  regulateOutputVoltage();
 };

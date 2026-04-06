@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-PlatformIO-based Arduino firmware for an aquarium lighting controller targeting **Arduino Nano (ATmega328)**. Controls 3 fluorescent ballasts (5 tubes total) via 1-10V analog dimming with a closed-loop voltage feedback system. Features a proportional multi-phase lighting schedule with siesta, quadratic ramps, and lumen-compensated ballast switching.
+PlatformIO-based Arduino firmware for an aquarium lighting controller targeting **Arduino Nano (ATmega328)**. Controls 3 fluorescent ballasts (5 tubes total) via 1-10V analog dimming with a closed-loop voltage feedback system. Features a proportional multi-phase lighting schedule with siesta, quadratic ramps, lumen-compensated ballast switching, and dynamic ballast selection with daily B1/B2 rotation for even tube wear and varied aquarium zone illumination.
 
 ## Commands
 
@@ -31,7 +31,7 @@ app/sterownik_oswietlenia/
     Debug.h               # Compile-time debug macros (disabled by default)
     Settings.h            # EEPROM-persisted user settings (start/stop times, timezone)
     Timezones.h           # Warsaw timezone DST rules (using Timezone library)
-    Schedule.h            # Lighting schedule definition (phase arrays, ballast masks)
+    Schedule.h            # Lighting schedule definition (phase arrays, power curves only)
     TimeController.h      # DS1302 RTC wrapper with quorum boot, BCD validation, EMI suppression
     DisplayController.h   # 16x2 I2C LCD wrapper with auto-backlight timeout
     InputManager.h        # 4-button input with debounce, short press, and hold-repeat
@@ -59,7 +59,7 @@ app/sterownik_oswietlenia/
 The schedule defines **Total System Power** as a percentage of all 5 tubes at full output. The controller translates this to **per-ballast power** for the feedback loop:
 
 ```
-perTubePower = (scheduleTotalSystemPower / activeTubes) * (5.0 / 100.0) * 100.0
+perTubePower = (scheduleTotalSystemPower * 5.0) / tubesInMask
 ```
 
 The voltage feedback loop uses a proportional controller (`VOLTAGE_KP = 1.0`) comparing the 1-10V feedback reading against the target, adjusting PWM output each loop iteration. The PWM output is **inverted** (`ANALOG_WRITE_RESOLUTION - outputVoltage`).
@@ -67,6 +67,17 @@ The voltage feedback loop uses a proportional controller (`VOLTAGE_KP = 1.0`) co
 ### Ballast Mask System
 
 Ballasts are addressed via bitmask: `BALLAST_1 = 0x01` (2 tubes), `BALLAST_2 = 0x02` (2 tubes), `BALLAST_3 = 0x04` (1 tube). `countTubesInMask()` maps these to tube counts. Relay pins are **active LOW** (LOW = ON, HIGH = OFF).
+
+### Dynamic Ballast Selection
+
+The schedule no longer contains ballast masks - it defines only power curves. `selectOptimalMask()` chooses the minimum number of tubes needed for the current system power level:
+
+- **Morning**: B3 solo (0-20%), B3 + primaryPair (20-60%)
+- **Evening**: primaryPair solo (0-40%), all 5 tubes (40-100%)
+
+Evening starts and ends on primaryPair (Grolux+Aquastar, warm/wide light) rather than B3 solo, giving the evening block a warmer aesthetic than the dawn.
+
+`primaryPair` alternates daily between B1 and B2 based on `(day + month*31) % 2`. This ensures different aquarium zones receive the "primary" solo light on alternating days, evening out tube wear as a side effect.
 
 ## Hardware Interface Gotchas
 
@@ -83,7 +94,7 @@ Ballasts are addressed via bitmask: `BALLAST_1 = 0x01` (2 tubes), `BALLAST_2 = 0
 
 ## Schedule Modification
 
-Schedules are defined as `SchedulePhase` arrays in `Schedule.h`. Each phase specifies: name, start/end percent within its block, ballast mask, ramp type (`RAMP_LINEAR`, `RAMP_QUAD_IN`, `RAMP_QUAD_OUT`, `HOLD`), and start/end power as **system-level percentages** (not per-tube). Phase percentages must be contiguous within a block (0.0 to 1.0). The siesta boundary is controlled by `SIESTA_START_PERCENT_OF_DAY` (0.37) and `SIESTA_END_PERCENT_OF_DAY` (0.67).
+Schedules are defined as `SchedulePhase` arrays in `Schedule.h`. Each phase specifies: name, start/end percent within its block, ramp type (`RAMP_LINEAR`, `RAMP_QUAD_IN`, `RAMP_QUAD_OUT`, `HOLD`), and start/end power as **system-level percentages** (not per-tube). Ballast masks are no longer part of the schedule - they are computed dynamically by `selectOptimalMask()` in `LightingController.cpp` based on the current power level and block type (morning/evening). Phase percentages must be contiguous within a block (0.0 to 1.0). The siesta boundary is controlled by `SIESTA_START_PERCENT_OF_DAY` (0.37) and `SIESTA_END_PERCENT_OF_DAY` (0.67).
 
 ## UI Structure
 

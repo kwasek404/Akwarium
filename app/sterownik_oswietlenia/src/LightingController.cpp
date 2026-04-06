@@ -1,10 +1,9 @@
 #include "LightingController.h"
 #include <Arduino.h>
 
-// --- Constants for transition logic ---
-const unsigned long TRANSITION_STABILIZE_TIMEOUT = 3000; // 3 seconds to wait for stabilization
-const float TRANSITION_DIM_POWER = 5.0f; // Dim to 5% power before switching
-const float STABILIZATION_THRESHOLD = 2.0f; // Power is stable if within 2% of target
+const unsigned long TRANSITION_STABILIZE_TIMEOUT = 3000;
+const float TRANSITION_DIM_POWER = 5.0f;
+const float STABILIZATION_THRESHOLD = 2.0f;
 
 LightingController::LightingController() {
     currentBallastMask = 0;
@@ -31,6 +30,8 @@ void LightingController::update(time_t now, const Settings& settings) {
         scheduleTargetPower = 0;
         scheduleTargetBallastMask = 0;
     } else {
+        updateDailyRotation(now);
+
         tmElements_t tm;
         breakTime(now, tm);
         long nowSeconds = tm.Hour * 3600L + tm.Minute * 60L + tm.Second;
@@ -56,8 +57,7 @@ uint8_t LightingController::getActiveBallastMask() const { return currentBallast
 float LightingController::getGlobalPowerPercent() const {
     int activeTubes = countTubesInMask(currentBallastMask);
     if (activeTubes == 0) return 0.0f;
-    // (current power per tube * active tubes) / total possible tubes (5)
-    return (currentPowerPercent * activeTubes) / 5.0f; 
+    return (currentPowerPercent * activeTubes) / 5.0f;
 }
 
 void LightingController::detectFaults() {
@@ -70,6 +70,40 @@ void LightingController::detectFaults() {
         }
     } else if (!isFault) {
         faultCheckTimer = 0;
+    }
+}
+
+void LightingController::updateDailyRotation(time_t now) {
+    tmElements_t tm;
+    breakTime(now, tm);
+    int today = tm.Day + tm.Month * 31;
+    if (today == lastRotationDay) return;
+    lastRotationDay = today;
+
+    if (today % 2 == 0) {
+        primaryPair = BALLAST_1;
+        secondaryPair = BALLAST_2;
+    } else {
+        primaryPair = BALLAST_2;
+        secondaryPair = BALLAST_1;
+    }
+}
+
+uint8_t LightingController::selectOptimalMask(float systemPower, bool isMorning) const {
+    if (systemPower <= 0.0f) return 0;
+
+    if (isMorning) {
+        // Morning: B3 solo up to 20%, then B3 + primaryPair
+        if (systemPower <= 20.0f) {
+            return BALLAST_3;
+        }
+        return BALLAST_3 | primaryPair;
+    } else {
+        // Evening: primaryPair solo up to 40%, then all 5 tubes
+        if (systemPower <= 40.0f) {
+            return primaryPair;
+        }
+        return primaryPair | secondaryPair | BALLAST_3;
     }
 }
 
@@ -104,16 +138,20 @@ void LightingController::runScheduler(long nowSeconds, long startSeconds, long s
             break;
         case MainState::MORNING_BLOCK:
             processActiveBlock(startSeconds, siestaStartSeconds - startSeconds,
-                               PRO_SCHEDULE_MORNING, PRO_SCHEDULE_MORNING_PHASES_COUNT, nowSeconds);
+                               PRO_SCHEDULE_MORNING, PRO_SCHEDULE_MORNING_PHASES_COUNT,
+                               nowSeconds, true);
             break;
         case MainState::EVENING_BLOCK:
             processActiveBlock(siestaEndSeconds, stopSeconds - siestaEndSeconds,
-                               PRO_SCHEDULE_EVENING, PRO_SCHEDULE_EVENING_PHASES_COUNT, nowSeconds);
+                               PRO_SCHEDULE_EVENING, PRO_SCHEDULE_EVENING_PHASES_COUNT,
+                               nowSeconds, false);
             break;
     }
 }
 
-void LightingController::processActiveBlock(long blockStartSeconds, long blockDuration, const SchedulePhase* phases, int phaseCount, long nowSeconds) {
+void LightingController::processActiveBlock(long blockStartSeconds, long blockDuration,
+                                            const SchedulePhase* phases, int phaseCount,
+                                            long nowSeconds, bool isMorning) {
     if (blockDuration <= 0) return;
     float blockProgress = (float)(nowSeconds - blockStartSeconds) / blockDuration;
 
@@ -121,9 +159,7 @@ void LightingController::processActiveBlock(long blockStartSeconds, long blockDu
         const SchedulePhase& phase = phases[i];
         if (blockProgress >= phase.startPercent && blockProgress <= phase.endPercent) {
             currentPhaseName = phase.name;
-            scheduleTargetBallastMask = phase.ballastMask;
 
-            // Calculate the scheduled TOTAL system power for this moment (0-100% of max output of all 5 tubes)
             float scheduleTotalSystemPower;
             if (phase.type == PhaseType::HOLD) {
                 scheduleTotalSystemPower = phase.startPower;
@@ -137,18 +173,11 @@ void LightingController::processActiveBlock(long blockStartSeconds, long blockDu
                 scheduleTotalSystemPower = phase.startPower + (phase.endPower - phase.startPower) * rampProgress;
             }
 
-            // Translate Total System Power (%) into Per-Ballast Power (%) for the feedback loop
-            int tubesInThisPhase = countTubesInMask(phase.ballastMask);
-            if (tubesInThisPhase > 0) {
-                // Total power is a percentage of the max possible output (5 tubes).
-                // E.g., 50% total power means we want the equivalent of 2.5 tubes at 100%.
-                // (scheduleTotalSystemPower / 100) -> proportion of total system power desired
-                // * 5.0f -> scale to "tube equivalents" (e.g., 60% system power = 3 tube equivalents)
-                // / tubesInThisPhase -> proportion of power needed per active tube
-                // * 100.0f -> convert back to percentage
-                float perTubePower = (scheduleTotalSystemPower * 5.0f) / tubesInThisPhase;
-                
-                // Safety check requested by user: ensure per-tube power doesn't exceed 100%.
+            scheduleTargetBallastMask = selectOptimalMask(scheduleTotalSystemPower, isMorning);
+
+            int tubesInMask = countTubesInMask(scheduleTargetBallastMask);
+            if (tubesInMask > 0) {
+                float perTubePower = (scheduleTotalSystemPower * 5.0f) / tubesInMask;
                 scheduleTargetPower = constrain(perTubePower, 0.0f, 100.0f);
             } else {
                 scheduleTargetPower = 0;
@@ -197,23 +226,22 @@ void LightingController::manageTransitions() {
                 uint8_t remove = (to_remove & BALLAST_3) ? BALLAST_3 : ((to_remove & BALLAST_2) ? BALLAST_2 : BALLAST_1);
                 nextMask &= ~remove;
             }
-            
+
             int newTubes = countTubesInMask(nextMask);
             setBallasts(nextMask);
 
-            // Calculate new target power to compensate for the change in active tubes
             if (newTubes > 0) {
                 float compensatedPower;
                 if (oldTubes > 0) {
                     compensatedPower = (powerBeforeTransition * oldTubes) / newTubes;
-                } else { // Starting from no tubes, go to the scheduled target
+                } else {
                     compensatedPower = scheduleTargetPower;
                 }
                  targetPowerPercent = constrain(compensatedPower, 0.0f, 100.0f);
-            } else { // No tubes active, power should be 0
+            } else {
                 targetPowerPercent = 0;
             }
-            
+
             transitionState = TransitionState::RAMP_UP;
             transitionStartTime = millis();
             lastBallastSwitchTime = millis();
@@ -231,7 +259,7 @@ void LightingController::manageTransitions() {
                 transitionState = TransitionState::FINISH_TRANSITION;
             }
             break;
-            
+
         case TransitionState::FINISH_TRANSITION:
             if (currentBallastMask != scheduleTargetBallastMask) {
                 if (millis() - lastBallastSwitchTime > SEQUENTIAL_SWITCH_DELAY_MS) {
