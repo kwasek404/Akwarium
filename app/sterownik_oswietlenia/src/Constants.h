@@ -49,6 +49,14 @@ const int ANALOG_WRITE_RESOLUTION = 255;
 // PID-like controller for voltage regulation
 const float VOLTAGE_KP = 1.0f; // Proportional gain for voltage adjustment
 
+// QTi Osram T5HO 54W power model (per ballast)
+// System watts = overhead + tubes * (CATHODE_WATTS + ARC_WATTS_PER_TUBE * dimFraction)
+// Verified: B1/B2 @100% = 12 + 2*(3.5+50.5) = 120W, B3 @100% = 8 + 1*54 = 62W
+const float BALLAST_PAIR_OVERHEAD_WATTS = 12.0f;  // B1/B2 static electronics draw
+const float BALLAST_SINGLE_OVERHEAD_WATTS = 8.0f; // B3 static electronics draw
+const float CATHODE_WATTS_PER_TUBE = 3.5f;         // cathode heating, constant when lit
+const float ARC_WATTS_PER_TUBE = 50.5f;            // scales linearly with dimming
+
 // UI Constants
 const int MAIN_MENU_SIZE = 4;
 

@@ -381,11 +381,13 @@ public:
         char buffer[17];
         time_t t = time.toLocal(time.nowUTC(), settings);
 
-        float globalPwr = lighting.getGlobalPowerPercent();
-        char pw[4];
-        dtostrf(globalPwr, 3, 0, pw);
-        snprintf(buffer, sizeof(buffer), "%02d:%02d %3s%% E:%u",
-                 hour(t), minute(t), pw, time.runtimeBadReads);
+        float watts = lighting.getSystemWatts();
+        int w = (int)(watts + 0.5f);
+        long countdown = lighting.getSecondsToNextPhase();
+        int cH = countdown / 3600;
+        int cM = (countdown % 3600) / 60;
+        snprintf(buffer, sizeof(buffer), "%02d:%02d %3dW %02d:%02d",
+                 hour(t), minute(t), w, cH, cM);
         display.print(0, 0, buffer);
 
         // --- Line 2: Phase Name and Ballasts ---

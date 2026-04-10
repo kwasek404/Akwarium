@@ -41,6 +41,9 @@ void LightingController::update(time_t now, const Settings& settings) {
             if (nowSeconds < startSeconds) { nowSeconds += 24 * 3600L; }
             stopSeconds += 24 * 3600L;
         }
+        cachedNowSeconds = nowSeconds;
+        cachedStartSeconds = startSeconds;
+        cachedStopSeconds = stopSeconds;
         runScheduler(nowSeconds, startSeconds, stopSeconds);
     }
 
@@ -54,10 +57,43 @@ bool LightingController::isTransformerOn() const { return transformerOn; }
 float LightingController::getCurrentPowerPercent() const { return currentPowerPercent; }
 const char* LightingController::getCurrentPhaseName() const { return currentPhaseName; }
 uint8_t LightingController::getActiveBallastMask() const { return currentBallastMask; }
-float LightingController::getGlobalPowerPercent() const {
+float LightingController::ballastOverhead(uint8_t mask) const {
+    float overhead = 0.0f;
+    if (mask & BALLAST_1) overhead += BALLAST_PAIR_OVERHEAD_WATTS;
+    if (mask & BALLAST_2) overhead += BALLAST_PAIR_OVERHEAD_WATTS;
+    if (mask & BALLAST_3) overhead += BALLAST_SINGLE_OVERHEAD_WATTS;
+    return overhead;
+}
+
+float LightingController::getSystemWatts() const {
     int activeTubes = countTubesInMask(currentBallastMask);
     if (activeTubes == 0) return 0.0f;
-    return (currentPowerPercent * activeTubes) / 5.0f;
+    float dimFraction = currentPowerPercent / 100.0f;
+    return ballastOverhead(currentBallastMask)
+         + activeTubes * (CATHODE_WATTS_PER_TUBE + ARC_WATTS_PER_TUBE * dimFraction);
+}
+
+long LightingController::getSecondsToNextPhase() const {
+    long totalDuration = cachedStopSeconds - cachedStartSeconds;
+    if (totalDuration <= 0) return 0;
+
+    switch (mainState) {
+        case MainState::OFF: {
+            if (cachedNowSeconds < cachedStartSeconds)
+                return cachedStartSeconds - cachedNowSeconds;
+            return 0;
+        }
+        case MainState::SIESTA: {
+            long siestaEnd = cachedStartSeconds + (long)(totalDuration * SIESTA_END_PERCENT_OF_DAY);
+            return max(0L, siestaEnd - cachedNowSeconds);
+        }
+        case MainState::MORNING_BLOCK:
+        case MainState::EVENING_BLOCK:
+            return max(0L, phaseEndSeconds - cachedNowSeconds);
+        case MainState::FAULT:
+        default:
+            return 0;
+    }
 }
 
 void LightingController::detectFaults() {
@@ -182,6 +218,8 @@ void LightingController::processActiveBlock(long blockStartSeconds, long blockDu
             } else {
                 scheduleTargetPower = 0;
             }
+
+            phaseEndSeconds = blockStartSeconds + (long)(phase.endPercent * blockDuration);
             return;
         }
     }

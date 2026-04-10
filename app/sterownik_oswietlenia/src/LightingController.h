@@ -13,7 +13,8 @@ public:
     void update(time_t now, const Settings& settings);
 
     float       getCurrentPowerPercent() const;
-    float       getGlobalPowerPercent() const;
+    float       getSystemWatts() const;
+    long        getSecondsToNextPhase() const;
     const char* getCurrentPhaseName() const;
     uint8_t     getActiveBallastMask() const;
     bool        isSystemInFault() const;
@@ -67,6 +68,11 @@ private:
     uint8_t     secondaryPair = BALLAST_2;
     int         lastRotationDay = -1;
 
+    long        phaseEndSeconds = 0;
+    long        cachedNowSeconds = 0;
+    long        cachedStartSeconds = 0;
+    long        cachedStopSeconds = 0;
+
     void detectFaults();
     void runScheduler(long nowSeconds, long startSeconds, long stopSeconds);
     void processActiveBlock(long blockStartSeconds, long blockDuration,
@@ -79,6 +85,7 @@ private:
     void setBallasts(uint8_t mask);
     int  countTubesInMask(uint8_t mask) const;
 
+    float ballastOverhead(uint8_t mask) const;
     float getFeedbackVoltagePercent() const;
     void  regulateOutputVoltage();
 };
