@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <avr/wdt.h>
 
 // Include all controller and settings headers
 #include "Constants.h"
@@ -20,6 +21,8 @@ LightingController lightingController;
 UIManager uiManager(displayController, timeController, lightingController, inputProcessor, settings);
 
 void setup() {
+    wdt_disable();
+
     pinMode(SWITCH_TRANSFORMER_PIN, OUTPUT);
     digitalWrite(SWITCH_TRANSFORMER_PIN, HIGH);
 
@@ -36,10 +39,13 @@ void setup() {
     delay(500);
     lightingController.begin();
     displayController.clear();
+
+    wdt_enable(WDTO_2S);
 }
 
 void loop() {
-    // Get current time once per loop
+    wdt_reset();
+
     time_t utc_now = timeController.nowUTC();
     time_t local_now = timeController.toLocal(utc_now, settings);
     

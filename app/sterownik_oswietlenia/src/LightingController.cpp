@@ -318,6 +318,7 @@ void LightingController::setBallasts(uint8_t mask) {
     digitalWrite(SWITCH_BALLAST_2_PIN, (mask & BALLAST_2) ? LOW : HIGH);
     digitalWrite(SWITCH_BALLAST_3_PIN, (mask & BALLAST_3) ? LOW : HIGH);
     currentBallastMask = mask;
+    relaySwitched = true;
 }
 
 int LightingController::countTubesInMask(uint8_t mask) const {
