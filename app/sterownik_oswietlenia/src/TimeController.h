@@ -17,7 +17,10 @@ public:
     uint16_t runtimeBadReads = 0;
 
     void suppressReads(unsigned long durationMs) {
-        suppressUntil = millis() + durationMs;
+        unsigned long until = millis() + durationMs;
+        if (until > suppressUntil) {
+            suppressUntil = until;
+        }
     }
 
     void begin() {
@@ -40,27 +43,32 @@ public:
 
         ::setTime(initialTime);
         lastKnownGoodTime = initialTime;
-        lastReadMillis = millis();
+        lastSyncMillis = millis();
     }
 
     time_t nowUTC() {
-        if (suppressUntil != 0 && millis() < suppressUntil) {
-            unsigned long elapsed = millis() - lastReadMillis;
-            return lastKnownGoodTime + (elapsed / 1000);
+        unsigned long now = millis();
+
+        bool suppressed = (suppressUntil != 0 && now < suppressUntil);
+        if (suppressed) {
+            return lastKnownGoodTime + (now - lastSyncMillis) / 1000;
         }
         suppressUntil = 0;
+
+        if (now - lastSyncMillis < RTC_SYNC_INTERVAL_MS) {
+            return lastKnownGoodTime + (now - lastSyncMillis) / 1000;
+        }
 
         time_t rawTime = getRawRtcTime();
 
         if (isTimeValid(rawTime)) {
             lastKnownGoodTime = rawTime;
-            lastReadMillis = millis();
+            lastSyncMillis = now;
             return rawTime;
         }
 
         runtimeBadReads++;
-        unsigned long elapsed = millis() - lastReadMillis;
-        return lastKnownGoodTime + (elapsed / 1000);
+        return lastKnownGoodTime + (now - lastSyncMillis) / 1000;
     }
 
     time_t toLocal(time_t utc, const Settings& settings) {
@@ -85,7 +93,7 @@ public:
         rtc.setDS1302Time(::second(utcTime), ::minute(utcTime), ::hour(utcTime), 0, ::day(utcTime), ::month(utcTime), ::year(utcTime));
 
         lastKnownGoodTime = utcTime;
-        lastReadMillis = millis();
+        lastSyncMillis = millis();
     }
 
     void adjustTime(long adjustment, const Settings& settings) {
@@ -93,13 +101,13 @@ public:
         rtc.setDS1302Time(::second(newTime), ::minute(newTime), ::hour(newTime), 0, ::day(newTime), ::month(newTime), ::year(newTime));
 
         lastKnownGoodTime = newTime;
-        lastReadMillis = millis();
+        lastSyncMillis = millis();
     }
 
 private:
     virtuabotixRTC rtc;
     time_t lastKnownGoodTime = 0;
-    unsigned long lastReadMillis = 0;
+    unsigned long lastSyncMillis = 0;
     unsigned long suppressUntil = 0;
 
     time_t getRawRtcTime() {

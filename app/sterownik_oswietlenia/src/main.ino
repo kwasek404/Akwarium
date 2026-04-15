@@ -1,7 +1,11 @@
 #include <Arduino.h>
 #include <avr/wdt.h>
+#include <Timezone.h>
 
-// Include all controller and settings headers
+TimeChangeRule CEST = {"CEST", Last, Sun, Mar, 2, 120};
+TimeChangeRule CET = {"CET", Last, Sun, Oct, 3, 60};
+Timezone warsawTZ(CEST, CET);
+
 #include "Constants.h"
 #include "Debug.h"
 #include "Settings.h"
@@ -37,7 +41,7 @@ void setup() {
     settings.load();
 
     delay(500);
-    lightingController.begin();
+    lightingController.begin(timeController);
     displayController.clear();
 
     wdt_enable(WDTO_2S);

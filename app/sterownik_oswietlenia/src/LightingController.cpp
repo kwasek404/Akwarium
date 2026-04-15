@@ -1,4 +1,5 @@
 #include "LightingController.h"
+#include "TimeController.h"
 #include <Arduino.h>
 
 const unsigned long TRANSITION_STABILIZE_TIMEOUT = 3000;
@@ -9,7 +10,8 @@ LightingController::LightingController() {
     currentBallastMask = 0;
 }
 
-void LightingController::begin() {
+void LightingController::begin(TimeController& tc) {
+    timeCtrl = &tc;
     pinMode(VOLTAGE_OUTPUT_PIN, OUTPUT);
     pinMode(SWITCH_TRANSFORMER_PIN, OUTPUT);
     pinMode(SWITCH_BALLAST_1_PIN, OUTPUT);
@@ -242,11 +244,22 @@ void LightingController::manageTransitions() {
             powerBeforeTransition = currentPowerPercent;
             targetPowerPercent = TRANSITION_DIM_POWER;
             transitionStartTime = millis();
+            stabilityCounter = 0;
             transitionState = TransitionState::WAIT_FOR_DIM;
             break;
 
         case TransitionState::WAIT_FOR_DIM:
-            if (abs(currentPowerPercent - targetPowerPercent) < STABILIZATION_THRESHOLD || elapsed > TRANSITION_STABILIZE_TIMEOUT) {
+            if (abs(currentPowerPercent - targetPowerPercent) < STABILIZATION_THRESHOLD) {
+                stabilityCounter++;
+                if (stabilityCounter >= STABILITY_REQUIRED_COUNT) {
+                    stabilityCounter = 0;
+                    transitionState = TransitionState::SWITCH_BALLAST;
+                }
+            } else {
+                stabilityCounter = 0;
+            }
+            if (elapsed > TRANSITION_STABILIZE_TIMEOUT) {
+                stabilityCounter = 0;
                 transitionState = TransitionState::SWITCH_BALLAST;
             }
             break;
@@ -293,7 +306,17 @@ void LightingController::manageTransitions() {
             break;
 
         case TransitionState::WAIT_FOR_BRIGHT:
-            if (abs(currentPowerPercent - targetPowerPercent) < STABILIZATION_THRESHOLD || elapsed > TRANSITION_STABILIZE_TIMEOUT) {
+            if (abs(currentPowerPercent - targetPowerPercent) < STABILIZATION_THRESHOLD) {
+                stabilityCounter++;
+                if (stabilityCounter >= STABILITY_REQUIRED_COUNT) {
+                    stabilityCounter = 0;
+                    transitionState = TransitionState::FINISH_TRANSITION;
+                }
+            } else {
+                stabilityCounter = 0;
+            }
+            if (elapsed > TRANSITION_STABILIZE_TIMEOUT) {
+                stabilityCounter = 0;
                 transitionState = TransitionState::FINISH_TRANSITION;
             }
             break;
@@ -317,8 +340,8 @@ void LightingController::setBallasts(uint8_t mask) {
     digitalWrite(SWITCH_BALLAST_1_PIN, (mask & BALLAST_1) ? LOW : HIGH);
     digitalWrite(SWITCH_BALLAST_2_PIN, (mask & BALLAST_2) ? LOW : HIGH);
     digitalWrite(SWITCH_BALLAST_3_PIN, (mask & BALLAST_3) ? LOW : HIGH);
+    if (timeCtrl) timeCtrl->suppressReads(500);
     currentBallastMask = mask;
-    relaySwitched = true;
 }
 
 int LightingController::countTubesInMask(uint8_t mask) const {

@@ -6,10 +6,12 @@
 #include "Settings.h"
 #include "Schedule.h"
 
+class TimeController;
+
 class LightingController {
 public:
     LightingController();
-    void begin();
+    void begin(TimeController& tc);
     void update(time_t now, const Settings& settings);
 
     float       getCurrentPowerPercent() const;
@@ -72,6 +74,9 @@ private:
     long        cachedNowSeconds = 0;
     long        cachedStartSeconds = 0;
     long        cachedStopSeconds = 0;
+
+    TimeController* timeCtrl = nullptr;
+    uint8_t     stabilityCounter = 0;
 
     void detectFaults();
     void runScheduler(long nowSeconds, long startSeconds, long stopSeconds);
