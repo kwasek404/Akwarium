@@ -47,6 +47,23 @@ void LightingController::update(time_t now, const Settings& settings) {
         cachedStartSeconds = startSeconds;
         cachedStopSeconds = stopSeconds;
         runScheduler(nowSeconds, startSeconds, stopSeconds);
+
+        if (firstUpdate) {
+            firstUpdate = false;
+            if (scheduleTargetPower > 0) {
+                triggerSoftStart();
+            }
+        }
+    }
+
+    if (softStartActive) {
+        unsigned long elapsed = millis() - softStartBeginMs;
+        if (elapsed >= SOFT_START_DURATION_MS) {
+            softStartActive = false;
+        } else {
+            float ramp = (float)elapsed / SOFT_START_DURATION_MS;
+            scheduleTargetPower *= ramp;
+        }
     }
 
     manageTransformer();
@@ -54,7 +71,13 @@ void LightingController::update(time_t now, const Settings& settings) {
     regulateOutputVoltage();
 }
 
+void LightingController::triggerSoftStart() {
+    softStartActive = true;
+    softStartBeginMs = millis();
+}
+
 bool LightingController::isTransformerOn() const { return transformerOn; }
+bool LightingController::isSystemInFault() const { return isFault; }
 
 float LightingController::getCurrentPowerPercent() const { return currentPowerPercent; }
 const char* LightingController::getCurrentPhaseName() const { return currentPhaseName; }

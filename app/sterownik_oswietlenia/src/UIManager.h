@@ -135,6 +135,8 @@ public:
 
                         editPos = 0;
 
+                        time.beginTimeEdit(settings);
+
                         drawCurrentScreen(true);
 
                     }
@@ -173,9 +175,21 @@ public:
 
             if (action.button == BTN_SET && action.event == EVENT_PRESS) {
 
-                editMode = EditMode::NONE;
+                if (editMode == EditMode::TIME) {
 
-                settings.save();
+                    time.commitTimeEdit(settings);
+
+                    lighting.triggerSoftStart();
+
+                } else {
+
+                    settings.save();
+
+                    lighting.triggerSoftStart();
+
+                }
+
+                editMode = EditMode::NONE;
 
                 drawCurrentScreen(true);
 
@@ -231,7 +245,7 @@ public:
 
                 }
 
-                time.adjustTime(adjustment, settings);
+                time.adjustEditOffset(adjustment);
 
             }
 
@@ -301,7 +315,12 @@ public:
 
     
 
-            time_t t = time.toLocal(time.nowUTC(), settings);
+            time_t t;
+            if (editMode == EditMode::TIME) {
+                t = time.getEditTime();
+            } else {
+                t = time.toLocal(time.nowUTC(), settings);
+            }
 
             char buffer[5];
 
@@ -404,7 +423,12 @@ public:
 
     void drawDateScreen() {
         char buffer[17];
-        time_t t = time.toLocal(time.nowUTC(), settings);
+        time_t t;
+        if (editMode == EditMode::TIME) {
+            t = time.getEditTime();
+        } else {
+            t = time.toLocal(time.nowUTC(), settings);
+        }
         
         snprintf(buffer, sizeof(buffer), "Time: %02d:%02d:%02d", hour(t), minute(t), second(t));
         display.print(0, 0, buffer);

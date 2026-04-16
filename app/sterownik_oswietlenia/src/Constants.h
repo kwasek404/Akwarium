@@ -41,6 +41,7 @@ const unsigned long HOLD_REPEAT_DELAY = 150; // ms between repeats when holding
 const unsigned long SEQUENTIAL_SWITCH_DELAY_MS = 1000; // 1 second between switching ballasts
 const unsigned long RTC_SYNC_INTERVAL_MS = 60000UL; // 60s between RTC hardware reads
 const uint8_t STABILITY_REQUIRED_COUNT = 10; // consecutive stable reads before relay switch
+const unsigned long SOFT_START_DURATION_MS = 120000UL; // 2 min ramp on boot/time-jump into active period
 const unsigned long FAN_COOLDOWN_MS = 300000UL; // 5 minutes cooldown after lights off
 const unsigned long TRANSFORMER_WARMUP_MS = 1500; // 1.5s for 1-10V circuit stabilization
 

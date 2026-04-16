@@ -21,6 +21,7 @@ public:
     uint8_t     getActiveBallastMask() const;
     bool        isSystemInFault() const;
     bool        isTransformerOn() const;
+    void        triggerSoftStart();
 
     bool        relaySwitched = false;
 
@@ -77,6 +78,10 @@ private:
 
     TimeController* timeCtrl = nullptr;
     uint8_t     stabilityCounter = 0;
+
+    bool          softStartActive = false;
+    unsigned long softStartBeginMs = 0;
+    bool          firstUpdate = true;
 
     void detectFaults();
     void runScheduler(long nowSeconds, long startSeconds, long stopSeconds);

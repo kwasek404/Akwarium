@@ -96,15 +96,40 @@ public:
         lastSyncMillis = millis();
     }
 
-    void adjustTime(long adjustment, const Settings& settings) {
-        time_t newTime = nowUTC() + adjustment;
-        rtc.setDS1302Time(::second(newTime), ::minute(newTime), ::hour(newTime), 0, ::day(newTime), ::month(newTime), ::year(newTime));
-
-        lastKnownGoodTime = newTime;
-        lastSyncMillis = millis();
+    void beginTimeEdit(const Settings& settings) {
+        editBaseTime = toLocal(nowUTC(), settings);
+        editOffset = 0;
+        editing = true;
     }
 
+    void adjustEditOffset(long adjustment) {
+        editOffset += adjustment;
+    }
+
+    time_t getEditTime() const {
+        return editBaseTime + editOffset;
+    }
+
+    void commitTimeEdit(const Settings& settings) {
+        time_t localTime = editBaseTime + editOffset;
+        time_t utcTime = (settings.timezone == TZ_WARSAW) ? warsawTZ.toUTC(localTime) : localTime;
+        rtc.setDS1302Time(::second(utcTime), ::minute(utcTime), ::hour(utcTime), 0, ::day(utcTime), ::month(utcTime), ::year(utcTime));
+        lastKnownGoodTime = utcTime;
+        lastSyncMillis = millis();
+        editing = false;
+    }
+
+    void cancelTimeEdit() {
+        editing = false;
+    }
+
+    bool isEditing() const { return editing; }
+
 private:
+    bool editing = false;
+    time_t editBaseTime = 0;
+    long editOffset = 0;
+
     virtuabotixRTC rtc;
     time_t lastKnownGoodTime = 0;
     unsigned long lastSyncMillis = 0;
