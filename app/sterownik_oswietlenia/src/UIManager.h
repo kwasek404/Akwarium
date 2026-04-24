@@ -69,7 +69,7 @@ public:
 
     private:
 
-        enum class EditMode { NONE, TIME, TIMER };
+        enum class EditMode { NONE, TIME, TIMER, OVERRIDE };
 
         
 
@@ -151,6 +151,16 @@ public:
 
                     }
 
+                    if (currentScreen == 4) {
+
+                        editMode = EditMode::OVERRIDE;
+
+                        editPos = 0;
+
+                        drawCurrentScreen(true);
+
+                    }
+
                     break;
 
                 case BTN_PLUS:
@@ -206,6 +216,10 @@ public:
             } else if (editMode == EditMode::TIMER) {
 
                 handleTimerEdit(action);
+
+            } else if (editMode == EditMode::OVERRIDE) {
+
+                handleOverrideEdit(action);
 
             }
 
@@ -278,6 +292,34 @@ public:
                     case 3: settings.stopMinute = (settings.stopMinute + dir + 60) % 60; break;
 
                 }
+
+            }
+
+        }
+
+    
+
+        void handleOverrideEdit(ButtonAction action) {
+
+            if (action.button == BTN_RIGHT && action.event == EVENT_PRESS) {
+
+                editPos = (editPos + 1) % 2;
+
+            }
+
+            if (editPos == 0 && (action.button == BTN_PLUS || action.button == BTN_MINUS) && action.event == EVENT_PRESS) {
+
+                lighting.overrideEnabled = !lighting.overrideEnabled;
+
+            }
+
+            if (editPos == 1 && (action.button == BTN_PLUS || action.button == BTN_MINUS)) {
+
+                int dir = (action.button == BTN_PLUS) ? 1 : -1;
+
+                int p = (int)lighting.overridePowerPercent + dir * 10;
+
+                lighting.overridePowerPercent = (uint8_t)constrain(p, 0, 100);
 
             }
 
@@ -380,6 +422,36 @@ public:
 
                 }
 
+            } else if (editMode == EditMode::OVERRIDE) {
+
+                if (editPos == 0) {
+
+                    if (blinkState) {
+
+                        display.print(13, 0, "   ");
+
+                    } else {
+
+                        display.print(13, 0, lighting.overrideEnabled ? " ON" : "OFF");
+
+                    }
+
+                } else {
+
+                    if (blinkState) {
+
+                        display.print(12, 1, "    ");
+
+                    } else {
+
+                        snprintf(buffer, sizeof(buffer), "%3d%%", lighting.overridePowerPercent);
+
+                        display.print(12, 1, buffer);
+
+                    }
+
+                }
+
             }
 
         }
@@ -393,6 +465,7 @@ public:
             case 1: drawDateScreen(); break;
             case 2: drawTimerScreen(); break;
             case 3: drawTimezoneScreen(); break;
+            case 4: drawOverrideScreen(); break;
         }
     }
 
@@ -449,6 +522,14 @@ public:
         const char* tzString = (settings.timezone == TZ_WARSAW) ? "Warsaw" : "UTC";
         char buffer[17];
         snprintf(buffer, sizeof(buffer), "> %-13s", tzString);
+        display.print(0, 1, buffer);
+    }
+
+    void drawOverrideScreen() {
+        char buffer[17];
+        snprintf(buffer, sizeof(buffer), "Override:    %s", lighting.overrideEnabled ? " ON" : "OFF");
+        display.print(0, 0, buffer);
+        snprintf(buffer, sizeof(buffer), "Power:      %3d%%", lighting.overridePowerPercent);
         display.print(0, 1, buffer);
     }
 };
