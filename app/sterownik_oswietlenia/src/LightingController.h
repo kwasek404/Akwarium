@@ -24,6 +24,8 @@ public:
     void        triggerSoftStart();
 
     bool        relaySwitched = false;
+    bool        overrideEnabled = false;
+    uint8_t     overridePowerPercent = 0;
 
 private:
     enum class MainState {
@@ -55,12 +57,11 @@ private:
 
     unsigned long lastBallastSwitchTime = 0;
     unsigned long transitionStartTime = 0;
-    float         powerBeforeTransition = 0.0f;
 
     bool          isFault = false;
     unsigned long faultCheckTimer = 0;
 
-    int         outputVoltage = 0;
+    float       outputPercent = 0.0f; // 0-100%, converted to PWM only at analogWrite
 
     bool          transformerOn = false;
     unsigned long transformerOnTime = 0;
@@ -77,7 +78,7 @@ private:
     long        cachedStopSeconds = 0;
 
     TimeController* timeCtrl = nullptr;
-    uint8_t     stabilityCounter = 0;
+    unsigned long stabilityWindowStart = 0;
 
     bool          softStartActive = false;
     unsigned long softStartBeginMs = 0;

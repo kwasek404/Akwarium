@@ -40,7 +40,7 @@ const unsigned long LONG_PRESS_DELAY = 500; // ms to trigger a long press
 const unsigned long HOLD_REPEAT_DELAY = 150; // ms between repeats when holding
 const unsigned long SEQUENTIAL_SWITCH_DELAY_MS = 1000; // 1 second between switching ballasts
 const unsigned long RTC_SYNC_INTERVAL_MS = 60000UL; // 60s between RTC hardware reads
-const uint8_t STABILITY_REQUIRED_COUNT = 10; // consecutive stable reads before relay switch
+const unsigned long STABILITY_WINDOW_MS = 10000UL;   // continuous window in ±2% before relay switch
 const unsigned long SOFT_START_DURATION_MS = 120000UL; // 2 min ramp on boot/time-jump into active period
 const unsigned long FAN_COOLDOWN_MS = 300000UL; // 5 minutes cooldown after lights off
 const unsigned long TRANSFORMER_WARMUP_MS = 1500; // 1.5s for 1-10V circuit stabilization
@@ -49,8 +49,12 @@ const unsigned long TRANSFORMER_WARMUP_MS = 1500; // 1.5s for 1-10V circuit stab
 const int ANALOG_READ_RESOLUTION = 1023;
 const int ANALOG_WRITE_RESOLUTION = 255;
 
-// PID-like controller for voltage regulation
-const float VOLTAGE_KP = 1.0f; // Proportional gain for voltage adjustment
+// Voltage regulation - proportional controller with clamped step
+// Large errors -> fast corrections; small errors -> fine tuning.
+// At ~200Hz: MAX_VOLTAGE_STEP*200 = 20%/s max; near target (<10% error): proportional, quieter.
+const float VOLTAGE_KP       = 0.01f;  // proportional gain (error% -> step%)
+const float MAX_VOLTAGE_STEP = 0.1f;   // max step per call (% of control range)
+const float MIN_ACTIVE_PER_TUBE_POWER = 30.0f;  // minimum per-tube % when any ballast is lit
 
 // QTi Osram T5HO 54W power model (per ballast)
 // System watts = overhead + tubes * (CATHODE_WATTS + ARC_WATTS_PER_TUBE * dimFraction)
@@ -61,6 +65,6 @@ const float CATHODE_WATTS_PER_TUBE = 3.5f;         // cathode heating, constant 
 const float ARC_WATTS_PER_TUBE = 50.5f;            // scales linearly with dimming
 
 // UI Constants
-const int MAIN_MENU_SIZE = 4;
+const int MAIN_MENU_SIZE = 5;
 
 #endif // CONSTANTS_H

@@ -23,24 +23,24 @@ struct SchedulePhase {
     float endPower;
 };
 
-const float SIESTA_START_PERCENT_OF_DAY = 0.37f;
-const float SIESTA_END_PERCENT_OF_DAY = 0.67f;
+const float SIESTA_START_PERCENT_OF_DAY = 0.30f;
+const float SIESTA_END_PERCENT_OF_DAY = 0.65f;
 
 // Morning: B3 solo -> B3+primary -> hold -> ramp down
 // Power thresholds: 0-20% = B3 solo (1 tube), 20-60% = B3+pair (3 tubes)
 const int PRO_SCHEDULE_MORNING_PHASES_COUNT = 4;
 const SchedulePhase PRO_SCHEDULE_MORNING[PRO_SCHEDULE_MORNING_PHASES_COUNT] = {
-    { "Dawn",      0.00,  0.25,   PhaseType::RAMP_QUAD_IN,    0,  10},
+    { "Dawn",      0.00,  0.25,   PhaseType::RAMP_QUAD_IN,    6,  10},
     { "Sunrise",   0.25,  0.50,   PhaseType::RAMP_LINEAR,    10,  60},
     { "Morning",   0.50,  0.90,   PhaseType::HOLD,           60,  60},
     { "SiestaR",   0.90,  1.00,   PhaseType::RAMP_QUAD_OUT,  60,   0}
 };
 
-// Evening: primary solo -> primary+secondary+B3 -> hold -> ramp down -> primary solo
-// Power thresholds: 0-40% = primary solo (2 tubes), 40-100% = all 5 tubes
+// Evening: B3 solo -> B3+primary -> B3+primary+secondary -> hold -> ramp down
+// Power thresholds: 0-20% = B3 solo (1 tube), 20-40% = B3+primary (3 tubes), 40-100% = all 5
 const int PRO_SCHEDULE_EVENING_PHASES_COUNT = 5;
 const SchedulePhase PRO_SCHEDULE_EVENING[PRO_SCHEDULE_EVENING_PHASES_COUNT] = {
-    { "Awakening", 0.00,  0.15,   PhaseType::RAMP_QUAD_IN,    0,  40},
+    { "Awakening", 0.00,  0.15,   PhaseType::RAMP_QUAD_IN,    6,  40},
     { "ZenithRmp", 0.15,  0.25,   PhaseType::RAMP_LINEAR,    40, 100},
     { "Zenith",    0.25,  0.80,   PhaseType::HOLD,          100, 100},
     { "ZenithD",   0.80,  0.85,   PhaseType::RAMP_LINEAR,   100,  40},

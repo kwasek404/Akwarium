@@ -2,8 +2,7 @@
 #include "TimeController.h"
 #include <Arduino.h>
 
-const unsigned long TRANSITION_STABILIZE_TIMEOUT = 3000;
-const float TRANSITION_DIM_POWER = 5.0f;
+const unsigned long TRANSITION_STABILIZE_TIMEOUT = 60000UL; // 60s fallback - system always floats on PWM, window logic is primary
 const float STABILIZATION_THRESHOLD = 2.0f;
 
 LightingController::LightingController() {
@@ -26,6 +25,21 @@ void LightingController::begin(TimeController& tc) {
 }
 
 void LightingController::update(time_t now, const Settings& settings) {
+    if (overrideEnabled) {
+        isFault = false;
+        faultCheckTimer = 0;
+        softStartActive = false;
+        transitionState = TransitionState::IDLE;
+        currentPhaseName = "Override";
+        scheduleTargetBallastMask = (overridePowerPercent > 0) ? (BALLAST_1 | BALLAST_2 | BALLAST_3) : 0;
+        scheduleTargetPower = (float)overridePowerPercent;
+        targetPowerPercent = scheduleTargetPower;
+        manageTransformer();
+        if (transformerOn) setBallasts(scheduleTargetBallastMask);
+        regulateOutputVoltage();
+        return;
+    }
+
     detectFaults();
 
     if (isFault) {
@@ -153,19 +167,19 @@ void LightingController::updateDailyRotation(time_t now) {
 uint8_t LightingController::selectOptimalMask(float systemPower, bool isMorning) const {
     if (systemPower <= 0.0f) return 0;
 
-    if (isMorning) {
-        // Morning: B3 solo up to 20%, then B3 + primaryPair
-        if (systemPower <= 20.0f) {
-            return BALLAST_3;
-        }
-        return BALLAST_3 | primaryPair;
-    } else {
-        // Evening: primaryPair solo up to 40%, then all 5 tubes
-        if (systemPower <= 40.0f) {
-            return primaryPair;
-        }
-        return primaryPair | secondaryPair | BALLAST_3;
+    // Both morning and evening: B3 solo up to 20%, B3 + primaryPair up to 40%.
+    // Evening adds secondaryPair above 40% to reach full 5-tube output.
+    if (systemPower <= 20.0f) {
+        return BALLAST_3;
     }
+    if (systemPower <= 40.0f) {
+        return BALLAST_3 | primaryPair;
+    }
+    if (isMorning) {
+        // Morning caps at 3 tubes - no secondaryPair needed below siesta
+        return BALLAST_3 | primaryPair;
+    }
+    return primaryPair | secondaryPair | BALLAST_3;
 }
 
 void LightingController::runScheduler(long nowSeconds, long startSeconds, long stopSeconds) {
@@ -240,6 +254,8 @@ void LightingController::processActiveBlock(long blockStartSeconds, long blockDu
             if (tubesInMask > 0) {
                 float perTubePower = (scheduleTotalSystemPower * 5.0f) / tubesInMask;
                 scheduleTargetPower = constrain(perTubePower, 0.0f, 100.0f);
+                if (scheduleTotalSystemPower > 0.0f)
+                    scheduleTargetPower = max(scheduleTargetPower, MIN_ACTIVE_PER_TUBE_POWER);
             } else {
                 scheduleTargetPower = 0;
             }
@@ -264,25 +280,42 @@ void LightingController::manageTransitions() {
 
     switch(transitionState) {
         case TransitionState::START_TRANSITION:
-            powerBeforeTransition = currentPowerPercent;
-            targetPowerPercent = TRANSITION_DIM_POWER;
+            targetPowerPercent = scheduleTargetPower;
             transitionStartTime = millis();
-            stabilityCounter = 0;
+            stabilityWindowStart = 0;
             transitionState = TransitionState::WAIT_FOR_DIM;
             break;
 
         case TransitionState::WAIT_FOR_DIM:
+            // Track schedule changes: target may shift during slow ramp (schedule is a live ramp)
+            targetPowerPercent = scheduleTargetPower;
+
+            // Block while 1-10V circuit is warming up: feedback unreliable, output not yet driven
+            if (transformerOn && (millis() - transformerOnTime < TRANSFORMER_WARMUP_MS)) {
+                stabilityWindowStart = 0;
+                transitionStartTime = millis(); // keep timeout reset while blocked
+                break;
+            }
+            // When adding ballasts: block until target reaches minimum per-tube level.
+            // Prevents cold-start / soft-start from closing relay at near-zero output.
+            if ((scheduleTargetBallastMask & ~currentBallastMask) != 0 &&
+                    targetPowerPercent < MIN_ACTIVE_PER_TUBE_POWER) {
+                stabilityWindowStart = 0;
+                transitionStartTime = millis(); // keep timeout reset while blocked
+                break;
+            }
+
             if (abs(currentPowerPercent - targetPowerPercent) < STABILIZATION_THRESHOLD) {
-                stabilityCounter++;
-                if (stabilityCounter >= STABILITY_REQUIRED_COUNT) {
-                    stabilityCounter = 0;
+                if (stabilityWindowStart == 0) stabilityWindowStart = millis();
+                if (millis() - stabilityWindowStart >= STABILITY_WINDOW_MS) {
+                    stabilityWindowStart = 0;
                     transitionState = TransitionState::SWITCH_BALLAST;
                 }
             } else {
-                stabilityCounter = 0;
+                stabilityWindowStart = 0;
             }
             if (elapsed > TRANSITION_STABILIZE_TIMEOUT) {
-                stabilityCounter = 0;
+                stabilityWindowStart = 0;
                 transitionState = TransitionState::SWITCH_BALLAST;
             }
             break;
@@ -290,7 +323,6 @@ void LightingController::manageTransitions() {
         case TransitionState::SWITCH_BALLAST: {
             uint8_t to_add = scheduleTargetBallastMask & ~currentBallastMask;
             uint8_t to_remove = currentBallastMask & ~scheduleTargetBallastMask;
-            int oldTubes = countTubesInMask(currentBallastMask);
             uint8_t nextMask = currentBallastMask;
 
             if (to_add) {
@@ -301,21 +333,9 @@ void LightingController::manageTransitions() {
                 nextMask &= ~remove;
             }
 
-            int newTubes = countTubesInMask(nextMask);
             setBallasts(nextMask);
-
-            if (newTubes > 0) {
-                float compensatedPower;
-                if (oldTubes > 0) {
-                    compensatedPower = (powerBeforeTransition * oldTubes) / newTubes;
-                } else {
-                    compensatedPower = scheduleTargetPower;
-                }
-                 targetPowerPercent = constrain(compensatedPower, 0.0f, 100.0f);
-            } else {
-                targetPowerPercent = 0;
-            }
-
+            // New ballasts start at current outputPercent, which equals scheduleTargetPower
+            // we stabilized at in WAIT_FOR_DIM - no lumen compensation needed.
             transitionState = TransitionState::RAMP_UP;
             transitionStartTime = millis();
             lastBallastSwitchTime = millis();
@@ -329,17 +349,19 @@ void LightingController::manageTransitions() {
             break;
 
         case TransitionState::WAIT_FOR_BRIGHT:
+            // Track schedule changes during stabilization wait
+            targetPowerPercent = scheduleTargetPower;
             if (abs(currentPowerPercent - targetPowerPercent) < STABILIZATION_THRESHOLD) {
-                stabilityCounter++;
-                if (stabilityCounter >= STABILITY_REQUIRED_COUNT) {
-                    stabilityCounter = 0;
+                if (stabilityWindowStart == 0) stabilityWindowStart = millis();
+                if (millis() - stabilityWindowStart >= STABILITY_WINDOW_MS) {
+                    stabilityWindowStart = 0;
                     transitionState = TransitionState::FINISH_TRANSITION;
                 }
             } else {
-                stabilityCounter = 0;
+                stabilityWindowStart = 0;
             }
             if (elapsed > TRANSITION_STABILIZE_TIMEOUT) {
-                stabilityCounter = 0;
+                stabilityWindowStart = 0;
                 transitionState = TransitionState::FINISH_TRANSITION;
             }
             break;
@@ -408,6 +430,7 @@ void LightingController::manageTransformer() {
 
 void LightingController::regulateOutputVoltage() {
     currentPowerPercent = getFeedbackVoltagePercent();
+
     if (mainState == MainState::OFF || mainState == MainState::FAULT || !transformerOn) {
         targetPowerPercent = 0;
     }
@@ -418,7 +441,9 @@ void LightingController::regulateOutputVoltage() {
     }
 
     float error = targetPowerPercent - currentPowerPercent;
-    outputVoltage += (int)(error * VOLTAGE_KP);
-    outputVoltage = constrain(outputVoltage, 0, ANALOG_WRITE_RESOLUTION);
-    analogWrite(VOLTAGE_OUTPUT_PIN, ANALOG_WRITE_RESOLUTION - outputVoltage);
+    float step = constrain(error * VOLTAGE_KP, -MAX_VOLTAGE_STEP, MAX_VOLTAGE_STEP);
+    outputPercent += step;
+    outputPercent = constrain(outputPercent, 0.0f, 100.0f);
+    int pwm = (int)(outputPercent * ANALOG_WRITE_RESOLUTION / 100.0f);
+    analogWrite(VOLTAGE_OUTPUT_PIN, ANALOG_WRITE_RESOLUTION - pwm);
 }
