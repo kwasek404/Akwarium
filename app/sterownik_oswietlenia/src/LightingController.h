@@ -96,6 +96,7 @@ private:
     void setBallasts(uint8_t mask);
     int  countTubesInMask(uint8_t mask) const;
 
+    bool tubesAreWarm() const;
     float ballastOverhead(uint8_t mask) const;
     float getFeedbackVoltagePercent() const;
     void  regulateOutputVoltage();

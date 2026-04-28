@@ -164,15 +164,21 @@ void LightingController::updateDailyRotation(time_t now) {
     }
 }
 
+bool LightingController::tubesAreWarm() const {
+    return (currentBallastMask != 0) &&
+           (millis() - lastBallastSwitchTime >= TUBE_WARMUP_MS);
+}
+
 uint8_t LightingController::selectOptimalMask(float systemPower, bool isMorning) const {
     if (systemPower <= 0.0f) return 0;
 
-    // Both morning and evening: B3 solo up to 20%, B3 + primaryPair up to 40%.
-    // Evening adds secondaryPair above 40% to reach full 5-tube output.
-    if (systemPower <= 20.0f) {
+    // Cold-start thresholds: per-tube >= MIN_COLD_PER_TUBE_POWER after adding tubes.
+    // 1 tube: 50%*1/5=10%, 3 tubes: 50%*3/5=30%, 5 tubes: 50%*5/5=50%.
+    // Evening adds secondaryPair above 50% to reach full 5-tube output.
+    if (systemPower <= 30.0f) {
         return BALLAST_3;
     }
-    if (systemPower <= 40.0f) {
+    if (systemPower <= 50.0f) {
         return BALLAST_3 | primaryPair;
     }
     if (isMorning) {
@@ -250,12 +256,26 @@ void LightingController::processActiveBlock(long blockStartSeconds, long blockDu
 
             scheduleTargetBallastMask = selectOptimalMask(scheduleTotalSystemPower, isMorning);
 
+            // Warm-hold: if current tubes are warm and can sustain warm MIN,
+            // keep them even if selectOptimalMask suggests fewer (smoother ramp-down)
+            bool warm = tubesAreWarm();
+            int currentTubes = countTubesInMask(currentBallastMask);
+            int targetTubes = countTubesInMask(scheduleTargetBallastMask);
+            if (warm && currentTubes > 0 && targetTubes < currentTubes) {
+                float perTubeWithCurrent = (scheduleTotalSystemPower * 5.0f) / currentTubes;
+                if (perTubeWithCurrent >= MIN_WARM_PER_TUBE_POWER) {
+                    scheduleTargetBallastMask = currentBallastMask;
+                }
+            }
+
             int tubesInMask = countTubesInMask(scheduleTargetBallastMask);
             if (tubesInMask > 0) {
                 float perTubePower = (scheduleTotalSystemPower * 5.0f) / tubesInMask;
                 scheduleTargetPower = constrain(perTubePower, 0.0f, 100.0f);
-                if (scheduleTotalSystemPower > 0.0f)
-                    scheduleTargetPower = max(scheduleTargetPower, MIN_ACTIVE_PER_TUBE_POWER);
+                if (scheduleTotalSystemPower > 0.0f) {
+                    float activeMin = warm ? MIN_WARM_PER_TUBE_POWER : MIN_COLD_PER_TUBE_POWER;
+                    scheduleTargetPower = max(scheduleTargetPower, activeMin);
+                }
             } else {
                 scheduleTargetPower = 0;
             }
@@ -296,10 +316,10 @@ void LightingController::manageTransitions() {
                 transitionStartTime = millis(); // keep timeout reset while blocked
                 break;
             }
-            // When adding ballasts: block until target reaches minimum per-tube level.
-            // Prevents cold-start / soft-start from closing relay at near-zero output.
+            // When adding ballasts: block until target reaches cold-start minimum.
+            // New tubes need reliable arc ignition - warm MIN is insufficient.
             if ((scheduleTargetBallastMask & ~currentBallastMask) != 0 &&
-                    targetPowerPercent < MIN_ACTIVE_PER_TUBE_POWER) {
+                    targetPowerPercent < MIN_COLD_PER_TUBE_POWER) {
                 stabilityWindowStart = 0;
                 transitionStartTime = millis(); // keep timeout reset while blocked
                 break;

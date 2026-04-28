@@ -27,20 +27,22 @@ const float SIESTA_START_PERCENT_OF_DAY = 0.30f;
 const float SIESTA_END_PERCENT_OF_DAY = 0.65f;
 
 // Morning: B3 solo -> B3+primary -> hold -> ramp down
-// Power thresholds: 0-20% = B3 solo (1 tube), 20-60% = B3+pair (3 tubes)
+// Cold-start thresholds: 0-30% = B3 solo (1 tube), 30-60% = B3+pair (3 tubes)
+// Warm-hold extends tube retention down to ~3% system (5% per-tube on 3 tubes)
 const int PRO_SCHEDULE_MORNING_PHASES_COUNT = 4;
 const SchedulePhase PRO_SCHEDULE_MORNING[PRO_SCHEDULE_MORNING_PHASES_COUNT] = {
-    { "Dawn",      0.00,  0.25,   PhaseType::RAMP_QUAD_IN,    6,  10},
-    { "Sunrise",   0.25,  0.50,   PhaseType::RAMP_LINEAR,    10,  60},
+    { "Dawn",      0.00,  0.25,   PhaseType::RAMP_QUAD_IN,   10,  15},
+    { "Sunrise",   0.25,  0.50,   PhaseType::RAMP_LINEAR,    15,  60},
     { "Morning",   0.50,  0.90,   PhaseType::HOLD,           60,  60},
     { "SiestaR",   0.90,  1.00,   PhaseType::RAMP_QUAD_OUT,  60,   0}
 };
 
 // Evening: B3 solo -> B3+primary -> B3+primary+secondary -> hold -> ramp down
-// Power thresholds: 0-20% = B3 solo (1 tube), 20-40% = B3+primary (3 tubes), 40-100% = all 5
+// Cold-start thresholds: 0-30% = B3 solo, 30-50% = B3+primary, 50-100% = all 5
+// Warm-hold extends tube retention down to ~1% system (5% per-tube on 1 tube)
 const int PRO_SCHEDULE_EVENING_PHASES_COUNT = 5;
 const SchedulePhase PRO_SCHEDULE_EVENING[PRO_SCHEDULE_EVENING_PHASES_COUNT] = {
-    { "Awakening", 0.00,  0.15,   PhaseType::RAMP_QUAD_IN,    6,  40},
+    { "Awakening", 0.00,  0.15,   PhaseType::RAMP_QUAD_IN,   10,  40},
     { "ZenithRmp", 0.15,  0.25,   PhaseType::RAMP_LINEAR,    40, 100},
     { "Zenith",    0.25,  0.80,   PhaseType::HOLD,          100, 100},
     { "ZenithD",   0.80,  0.85,   PhaseType::RAMP_LINEAR,   100,  40},

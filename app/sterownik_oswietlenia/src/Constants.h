@@ -54,7 +54,9 @@ const int ANALOG_WRITE_RESOLUTION = 255;
 // At ~200Hz: MAX_VOLTAGE_STEP*200 = 20%/s max; near target (<10% error): proportional, quieter.
 const float VOLTAGE_KP       = 0.01f;  // proportional gain (error% -> step%)
 const float MAX_VOLTAGE_STEP = 0.1f;   // max step per call (% of control range)
-const float MIN_ACTIVE_PER_TUBE_POWER = 30.0f;  // minimum per-tube % when any ballast is lit
+const float MIN_COLD_PER_TUBE_POWER = 50.0f;   // cold-start minimum per-tube % (arc ignition)
+const float MIN_WARM_PER_TUBE_POWER = 5.0f;    // warm operation minimum per-tube % (stable arc)
+const unsigned long TUBE_WARMUP_MS = 300000UL;  // 5 min for tube arc/gas stabilization
 
 // QTi Osram T5HO 54W power model (per ballast)
 // System watts = overhead + tubes * (CATHODE_WATTS + ARC_WATTS_PER_TUBE * dimFraction)
