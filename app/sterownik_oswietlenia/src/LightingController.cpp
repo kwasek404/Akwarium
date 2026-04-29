@@ -30,6 +30,7 @@ void LightingController::update(time_t now, const Settings& settings) {
         faultCheckTimer = 0;
         softStartActive = false;
         transitionState = TransitionState::IDLE;
+        mainState = MainState::EVENING_BLOCK; // prevent regulateOutputVoltage from zeroing target
         currentPhaseName = "Override";
         scheduleTargetBallastMask = (overridePowerPercent > 0) ? (BALLAST_1 | BALLAST_2 | BALLAST_3) : 0;
         scheduleTargetPower = (float)overridePowerPercent;

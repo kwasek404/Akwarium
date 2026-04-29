@@ -95,6 +95,10 @@ public:
 
         bool blinkState = false;
 
+        // Override edit staging - applied only on BTN_SET confirmation
+        bool editOverrideEnabled = false;
+        uint8_t editOverridePower = 0;
+
     
 
         void handleInput(ButtonAction action) {
@@ -157,6 +161,10 @@ public:
 
                         editPos = 0;
 
+                        editOverrideEnabled = lighting.overrideEnabled;
+
+                        editOverridePower = lighting.overridePowerPercent;
+
                         drawCurrentScreen(true);
 
                     }
@@ -190,6 +198,12 @@ public:
                     time.commitTimeEdit(settings);
 
                     lighting.triggerSoftStart();
+
+                } else if (editMode == EditMode::OVERRIDE) {
+
+                    lighting.overrideEnabled = editOverrideEnabled;
+
+                    lighting.overridePowerPercent = editOverridePower;
 
                 } else {
 
@@ -309,7 +323,7 @@ public:
 
             if (editPos == 0 && (action.button == BTN_PLUS || action.button == BTN_MINUS) && action.event == EVENT_PRESS) {
 
-                lighting.overrideEnabled = !lighting.overrideEnabled;
+                editOverrideEnabled = !editOverrideEnabled;
 
             }
 
@@ -317,9 +331,9 @@ public:
 
                 int dir = (action.button == BTN_PLUS) ? 1 : -1;
 
-                int p = (int)lighting.overridePowerPercent + dir * 10;
+                int p = (int)editOverridePower + dir * 10;
 
-                lighting.overridePowerPercent = (uint8_t)constrain(p, 0, 100);
+                editOverridePower = (uint8_t)constrain(p, 0, 100);
 
             }
 
@@ -432,7 +446,7 @@ public:
 
                     } else {
 
-                        display.print(13, 0, lighting.overrideEnabled ? " ON" : "OFF");
+                        display.print(13, 0, editOverrideEnabled ? " ON" : "OFF");
 
                     }
 
@@ -444,7 +458,7 @@ public:
 
                     } else {
 
-                        snprintf(buffer, sizeof(buffer), "%3d%%", lighting.overridePowerPercent);
+                        snprintf(buffer, sizeof(buffer), "%3d%%", editOverridePower);
 
                         display.print(12, 1, buffer);
 
@@ -527,9 +541,11 @@ public:
 
     void drawOverrideScreen() {
         char buffer[17];
-        snprintf(buffer, sizeof(buffer), "Override:    %s", lighting.overrideEnabled ? " ON" : "OFF");
+        bool en = (editMode == EditMode::OVERRIDE) ? editOverrideEnabled : lighting.overrideEnabled;
+        uint8_t pwr = (editMode == EditMode::OVERRIDE) ? editOverridePower : lighting.overridePowerPercent;
+        snprintf(buffer, sizeof(buffer), "Override:    %s", en ? " ON" : "OFF");
         display.print(0, 0, buffer);
-        snprintf(buffer, sizeof(buffer), "Power:      %3d%%", lighting.overridePowerPercent);
+        snprintf(buffer, sizeof(buffer), "Power:      %3d%%", pwr);
         display.print(0, 1, buffer);
     }
 };
